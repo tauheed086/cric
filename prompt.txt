@@ -1,0 +1,614 @@
+Act as a world-class senior product designer and sports tournament platform architect.
+
+Design a complete **Desktop + Mobile UI/UX** for a **local cricket tournament scoring and management application** where **admins manually update match scores**, and those updates are instantly reflected in the public-facing app like a live score experience.
+
+This is **NOT** an API-based live cricket app.
+This is **NOT** for international live feeds.
+This is a **custom local cricket tournament platform** for organizers, scorers, teams, and viewers.
+
+The system should include two major sides:
+
+1. **Admin / Scorer Panel**
+2. **Public User App (Desktop + Mobile)**
+
+The product should feel like a professional cricket scoring platform built specifically for local tournaments, academies, corporate leagues, societies, district events, and community cricket competitions.
+
+-----------------------------------
+1. PRODUCT GOAL
+-----------------------------------
+Create a full-featured cricket tournament application where tournament organizers can:
+
+- Create and manage tournaments
+- Add teams, players, venues, and officials
+- Create fixtures and match schedules
+- Update toss, playing XI, innings, scores, wickets, overs, extras, fall of wickets, partnerships, and results manually
+- Assign man of the match
+- Automatically calculate points table
+- Automatically calculate top run scorers, top wicket takers, strike rate leaders, economy leaders
+- Automatically calculate player rankings
+- Automatically determine Player of the Series based on tournament performance rules
+- Publish match updates that reflect instantly in the public app
+
+And where public users can:
+- View fixtures
+- View match scores updated by admin in near-real-time
+- Follow tournament progress
+- View points table
+- View player stats
+- View team stats
+- View scorecards
+- View commentary or scoring updates if admin enters them
+- See awards like Man of the Match and Player of the Tournament / Series
+
+-----------------------------------
+2. IMPORTANT CONSTRAINT
+-----------------------------------
+Do NOT design this as an external live API sports app.
+
+Instead:
+- Design it as an **admin-controlled scoring platform**
+- The “live” experience comes from **manual admin/scorer updates**
+- Public users should still feel like scores are updating live
+- The UI must support local tournament workflows and operations
+
+-----------------------------------
+3. REQUIRED MODULES
+-----------------------------------
+Design the system with these modules:
+
+A. Public App
+- Home
+- Tournament overview
+- Fixtures
+- Live scoring style match center (admin-updated)
+- Results
+- Points table
+- Team pages
+- Player pages
+- Stats leaderboard
+- Awards
+- News / announcements
+- Gallery optional
+- Search
+- Profile / preferences optional
+
+B. Admin Panel
+- Tournament dashboard
+- Tournament creation/editing
+- Team management
+- Player management
+- Fixture management
+- Match scoring panel
+- Result publishing
+- Points table management (auto-calculated with manual override option)
+- Awards management
+- Announcements management
+- Umpires / venue management
+- Score approval / publish flow
+- Admin roles / scorer roles optional
+
+-----------------------------------
+4. TARGET USERS
+-----------------------------------
+Design for:
+- Tournament organizers
+- Scorers
+- Admins
+- Team managers
+- Players
+- Spectators
+- Fans of the local league
+
+The UI should be easy enough for local scorers to use, while still feeling premium and professional.
+
+-----------------------------------
+5. PUBLIC APP SCREENS
+-----------------------------------
+
+A. HOME / TOURNAMENT DASHBOARD
+Include:
+- Tournament hero banner
+- Tournament name, season, sponsor area
+- Ongoing matches
+- Upcoming fixtures
+- Recent results
+- Points table preview
+- Top batters preview
+- Top bowlers preview
+- Featured player
+- Latest announcement
+- Tournament stats summary
+- Quick links to teams, fixtures, stats, and awards
+
+Desktop:
+- Rich dashboard with multiple modules
+- Sidebar or top nav
+- Right-side widgets for standings and leaders
+
+Mobile:
+- Sticky header
+- Compact cards
+- Swipeable sections
+- Bottom navigation
+
+B. FIXTURES SCREEN
+Include:
+- Date selector
+- Match status filters:
+  - Upcoming
+  - In Progress
+  - Completed
+  - Abandoned
+  - Delayed
+- Match cards with:
+  - Team names
+  - Team logos
+  - match time
+  - venue
+  - match number
+  - stage (league, semi-final, final)
+  - toss indicator when available
+  - status badge
+- Reminder or follow match option
+
+C. MATCH CENTER / SCORE VIEW
+This should feel like a live score screen, but powered by admin updates.
+
+Include:
+- Match header
+- Team names and logos
+- Venue
+- Match number
+- Tournament stage
+- Toss result
+- Current innings
+- Score
+- Overs
+- Run rate
+- Target and required rate
+- Batters at crease
+- Bowlers
+- Partnerships
+- Extras
+- Fall of wickets
+- Recent overs
+- Innings summary
+- Match status text like:
+  - Team A need 25 from 12
+  - Innings break
+  - Rain interrupted
+  - Match completed
+- Tabs:
+  - Overview
+  - Scorecard
+  - Commentary
+  - Squads
+  - Stats
+- Last updated timestamp
+- “Updated by scorer/admin” indicator
+
+States to design:
+- Before toss
+- After toss before start
+- First innings live-style view
+- Innings break
+- Second innings chase
+- Match complete
+- Match delayed
+- Match abandoned
+
+D. SCORECARD SCREEN
+Include:
+- Batting table
+- Bowling table
+- Extras
+- Total
+- Fall of wickets
+- Did not bat
+- Run rate
+- Partnership breakdown
+- Innings selector
+- Clean cricket scoring layout
+
+E. RESULTS SCREEN
+Include:
+- Completed matches
+- Result summary
+- Margin of win
+- Man of the Match
+- Match summary cards
+
+F. POINTS TABLE
+Include:
+- Team
+- Played
+- Won
+- Lost
+- Tied
+- No Result
+- Points
+- Net Run Rate
+- Qualified indicator
+- Eliminated indicator
+- Group filters if multiple groups exist
+
+G. TEAM PAGE
+Include:
+- Team banner
+- Team logo
+- Captain
+- Squad
+- Played / won / lost
+- Recent form
+- Upcoming matches
+- Team stats
+- Team leaderboard
+- Team results
+- Follow team button
+
+H. PLAYER PAGE
+Include:
+- Player photo/avatar
+- Team
+- Role
+- Batting style
+- Bowling style
+- Matches
+- Runs
+- Wickets
+- Strike rate
+- Economy
+- Average
+- Highest score
+- Best bowling
+- Recent performances
+- Awards won
+- Player ranking in tournament
+
+I. STATS / LEADERBOARDS
+Include:
+- Most runs
+- Most wickets
+- Best strike rate
+- Best economy
+- Most sixes
+- Most fours
+- Highest score
+- Best bowling figures
+- Most catches
+- Most stumpings
+- MVP / impact points
+- Filter by tournament stage or team
+
+J. AWARDS SCREEN
+Include:
+- Man of the Match for each game
+- Player of the Series
+- Best Batter
+- Best Bowler
+- Emerging Player
+- Best Fielder
+- Award cards with player details and stats
+
+K. ANNOUNCEMENTS / NEWS
+Include:
+- Match updates
+- Schedule changes
+- Toss delayed
+- Venue changed
+- Final day notices
+- Tournament winner announcement
+
+-----------------------------------
+6. ADMIN PANEL SCREENS
+-----------------------------------
+
+A. ADMIN DASHBOARD
+Include:
+- Tournament overview
+- Matches today
+- Pending score updates
+- In-progress matches
+- Completed matches
+- Quick stats
+- Alerts for missing scorecards or unpublished results
+
+B. TOURNAMENT SETUP
+Include:
+- Tournament name
+- Season
+- Format
+- Overs per innings
+- Ball type
+- number of teams
+- group structure
+- knockout stages
+- points rules
+- net run rate rules
+- player of the series calculation rules
+- logo upload
+- sponsor branding
+
+C. TEAM MANAGEMENT
+Include:
+- Add/edit/delete teams
+- Team logo
+- Team jersey colors
+- Squad management
+- Captain / vice captain
+- Team manager
+
+D. PLAYER MANAGEMENT
+Include:
+- Add/edit/delete players
+- Assign player to team
+- Role
+- Batting hand
+- Bowling type
+- jersey number
+- player photo
+
+E. FIXTURE MANAGEMENT
+Include:
+- Create matches
+- Assign venue
+- Assign date/time
+- Assign teams
+- Match stage
+- Auto-generate fixtures optional
+- Manual reorder
+- Edit postponed match
+- Reschedule match
+
+F. MATCH SCORING PANEL
+This is the most important admin screen.
+
+Design an efficient scorer-friendly panel with:
+- Match info header
+- Toss update
+- Playing XI selection
+- Striker / non-striker / bowler selection
+- Over-by-over scoring controls
+- Ball outcome buttons:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 6
+  - wicket
+  - wide
+  - no ball
+  - bye
+  - leg bye
+  - undo
+- Wicket type selector
+- New batter selector
+- Bowler change selector
+- End innings button
+- Start innings button
+- Declare result button
+- Save draft / publish update
+- Auto-update score summary
+- Auto-calculate batter and bowler stats
+- Commentary note field optional
+- Manual correction flow
+- Match interruption controls:
+  - rain delay
+  - injury break
+  - drinks
+  - innings break
+  - abandoned
+  - DLS adjusted target optional
+
+This screen should be optimized for fast scoring on both desktop and tablet/mobile.
+
+G. RESULT PUBLISHING
+Include:
+- Final score confirmation
+- Result summary
+- Winning margin
+- Man of the Match selector
+- Key performers
+- Publish match result button
+
+H. AWARD MANAGEMENT
+Include:
+- Select Man of the Match
+- Select Player of the Series
+- Select Best Batter / Bowler
+- Override automatic recommendations
+- Show why a player is recommended based on stats
+
+I. SETTINGS / RULE ENGINE
+Include:
+- tournament point rules
+- bonus points optional
+- tie rules
+- NRR logic
+- player ranking logic
+- player of the series scoring formula
+- manual override settings
+
+-----------------------------------
+7. AUTOMATION FEATURES TO VISUALIZE
+-----------------------------------
+Even though admin updates data manually, the system should automatically calculate:
+
+- Points table
+- Net run rate
+- Team standing
+- Match result summary
+- Batter tournament stats
+- Bowler tournament stats
+- Most runs leaderboard
+- Most wickets leaderboard
+- Best strike rate
+- Best economy
+- Most valuable player score
+- Player of the series recommendation
+- Man of the match recommendation
+
+Show these automation-based features inside the UI.
+
+-----------------------------------
+8. PLAYER OF THE SERIES / MAN OF THE MATCH LOGIC
+-----------------------------------
+Reflect a smart system where:
+- Man of the Match can be selected by admin
+- System can recommend based on batting, bowling, fielding impact
+- Player of the Series is calculated from full tournament stats
+- Admin can manually override final award winners
+
+Design UI to show:
+- recommended player
+- performance metrics
+- override action
+- locked final award state
+
+-----------------------------------
+9. VISUAL STYLE
+-----------------------------------
+Create a premium modern sports management UI with:
+- Dark mode primary design
+- Optional light mode adaptability
+- Elegant cards
+- Clear cricket data hierarchy
+- Professional tournament branding support
+- Strong typography
+- Refined tables
+- Rich status badges
+- Polished admin dashboard feel
+- Public app should feel exciting and dynamic
+- Admin panel should feel efficient, clean, and operational
+
+Use semantic colors for:
+- Upcoming
+- In Progress
+- Completed
+- Delayed
+- Abandoned
+- Winner
+- Alert / error
+- Draft / unpublished
+
+Do not make it look like:
+- a betting app
+- a fantasy app
+- a generic scoreboard template
+
+Make it feel like a true local tournament platform.
+
+-----------------------------------
+10. RESPONSIVE REQUIREMENTS
+-----------------------------------
+Design for:
+- Desktop web
+- Mobile app
+- Admin scoring screen also usable on tablet/mobile
+
+Explain:
+- how tables collapse on mobile
+- how scoring controls remain tappable
+- how scorecards adapt
+- how the points table becomes horizontally scrollable or card-based
+- how admin can score quickly from a phone if needed
+
+-----------------------------------
+11. COMPONENTS TO INCLUDE
+-----------------------------------
+Create a reusable component system with:
+- tournament cards
+- fixture cards
+- score cards
+- team row
+- player row
+- stat cards
+- leaderboard cards
+- points table rows
+- award cards
+- admin form fields
+- score entry controls
+- innings tabs
+- filter chips
+- search bar
+- notification banner
+- result modal
+- publish confirmation modal
+- empty state
+- loading skeleton
+- status badges
+- tabs
+- segmented controls
+- dropdown selectors
+- bottom sheets on mobile
+
+-----------------------------------
+12. UX DETAILS
+-----------------------------------
+Include polished UX such as:
+- instant score reflection after admin save/publish
+- last updated timestamp
+- scorer identity tag
+- draft vs published state
+- undo scoring action
+- edit last ball
+- confirm innings end
+- warning before publishing final result
+- easy correction flow for scoring mistakes
+- autosave support
+- connection loss fallback
+- no data states
+- toast confirmations
+- sticky score header
+- quick navigation between innings and scorecard tabs
+
+-----------------------------------
+13. OUTPUT FORMAT
+-----------------------------------
+Provide the final output as a full structured design specification including:
+
+1. Product summary
+2. Public app desktop screens
+3. Public app mobile screens
+4. Admin panel screens
+5. Match scoring UX breakdown
+6. Layout system
+7. Visual design system
+8. Color palette
+9. Typography scale
+10. Component library
+11. Responsive rules
+12. Data relationships
+13. Award calculation UX
+14. Key user flows
+15. Production-ready design notes
+
+Also include:
+- sample dashboard layout
+- sample fixture card
+- sample scorecard layout
+- sample admin scoring screen
+- sample points table layout
+- sample awards screen
+
+-----------------------------------
+14. QUALITY BAR
+-----------------------------------
+The result must feel:
+- premium
+- realistic
+- production-ready
+- cricket-specific
+- operationally smart
+- useful for real tournament organizers
+- visually elite
+- stronger than a generic sports UI
+
+Do not keep it generic.
+Do not rely on live sports APIs.
+Do not design only viewer screens.
+Do not ignore the admin/scorer workflow.
+Do not simplify cricket scoring logic too much.
+
+Create a full expert-level design system and UI concept for this local cricket tournament scoring and management platform now.

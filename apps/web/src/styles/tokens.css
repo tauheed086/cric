@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
+
+:root {
+  --bg-0: #0a1018;
+  --bg-1: #111a26;
+  --bg-2: #1a2635;
+  --text: #e8f0ff;
+  --text-soft: #b8c6df;
+  --line: #27384c;
+  --accent: #14c38e;
+  --accent-alt: #19b2d6;
+  --danger: #f05656;
+  --warn: #f59f00;
+  --ok: #35d07f;
+  --shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  --radius: 14px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-0: #f5f8fc;
+    --bg-1: #ffffff;
+    --bg-2: #edf3fb;
+    --text: #0f1f33;
+    --text-soft: #4f617a;
+    --line: #d9e3f0;
+    --shadow: 0 8px 22px rgba(19, 44, 77, 0.08);
+  }
+}

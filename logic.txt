@@ -1,0 +1,717 @@
+Build a **cricket scoring engine** with production-grade match logic. Focus on the internal scoring rules, validations, state transitions, and edge cases rather than admin/dashboard features.
+
+The engine must behave like a real scorer and should never allow impossible match states.
+
+## Core Objective
+
+Create a robust ball-by-ball cricket scoring system that manages:
+
+* striker and non-striker correctly
+* over progression correctly
+* legal ball vs illegal ball handling
+* wickets and player-out state
+* innings completion logic
+* target/chasing logic
+* extras logic
+* validations to prevent broken scorecards
+* undo/edit-safe state transitions
+
+The system should be designed as a **rule engine / state machine**, not just a form that adds runs.
+
+---
+
+## 1. Match State Model
+
+The scoring engine must always maintain a complete live match state including:
+
+### Match-level state
+
+* match format
+* overs limit
+* balls per over
+* innings count
+* current innings number
+* toss result
+* batting team
+* bowling team
+* target score for chasing innings
+* match result state:
+
+  * not started
+  * toss completed
+  * innings in progress
+  * innings break
+  * completed
+  * abandoned
+  * super over
+
+### Innings-level state
+
+* total runs
+* wickets fallen
+* overs completed
+* balls in current over
+* legal balls bowled
+* extras total
+* breakdown of extras:
+
+  * wides
+  * no balls
+  * byes
+  * leg byes
+  * penalty runs if supported
+* current run rate
+* required run rate if chasing
+* striker
+* non-striker
+* current bowler
+* previous bowler
+* fall of wickets
+* partnerships
+* all batters used / yet to bat
+* bowlers used / available
+
+### Player-level live state
+
+For each batter:
+
+* runs
+* balls faced
+* fours
+* sixes
+* strike rate
+* dismissal type
+* dismissed by
+* is on strike
+* is out
+* has batted
+* entry order
+
+For each bowler:
+
+* overs
+* balls
+* maidens
+* runs conceded
+* wickets
+* wides
+* no balls
+* economy
+
+---
+
+## 2. Ball Event Engine
+
+Every scoring action must be recorded as a **ball event**. The engine must support:
+
+### Ball outcomes
+
+* dot ball
+* 1 run
+* 2 runs
+* 3 runs
+* 4 runs
+* 5 runs if manually entered
+* 6 runs
+
+### Extras
+
+* wide
+* no ball
+* bye
+* leg bye
+* no ball + runs off bat
+* no ball + byes
+* no ball + leg byes
+* wide + additional running if allowed by system design
+* penalty runs if enabled by rules
+
+### Wickets
+
+* bowled
+* caught
+* LBW
+* stumped
+* hit wicket
+* run out
+* obstructing the field if supported
+* retired out / retired hurt if supported
+* timed out if supported
+
+### Composite events
+
+The engine must support ball events with combinations such as:
+
+* no ball + 1 run off bat
+* no ball + 4 runs off bat
+* no ball + wicket on run out
+* bye + run out
+* leg bye + run out
+* caught on no ball should be invalid except special cases if rules support
+* stumping off wide
+* run out on a wide
+* run out on a no ball
+
+Each event must update:
+
+* innings total
+* batter stats
+* bowler stats
+* extras stats
+* striker/non-striker
+* wickets
+* over state
+* partnership
+* fall of wicket if applicable
+
+---
+
+## 3. Legal Ball Logic
+
+The engine must clearly distinguish:
+
+### Legal deliveries
+
+These increase ball count:
+
+* normal scoring shots
+* dot balls
+* wickets on legal delivery
+* byes
+* leg byes
+
+### Illegal deliveries
+
+These do **not** increase legal ball count:
+
+* wides
+* no balls
+
+### Rules
+
+* wides add at least 1 run to team total
+* no balls add at least 1 run to team total
+* wides do not count as legal balls
+* no balls do not count as legal balls
+* byes and leg byes count as legal balls unless attached to no ball logic that rule-set changes
+* over completes only after required number of legal balls
+
+The engine must always compute:
+
+* display overs in cricket format, e.g. 4.3 means 4 overs and 3 legal balls
+* internal ball count separately for safe calculations
+
+---
+
+## 4. Striker / Non-Striker Rotation Logic
+
+Implement exact strike handling.
+
+### Basic strike rotation
+
+* odd total completed runs on a ball → striker and non-striker swap
+* even total completed runs on a ball → striker remains same
+* boundary 4 or 6 with no running:
+
+  * 4 → striker remains unless runs completed caused odd crossing in edge-rule design
+  * 6 → striker remains
+* byes and leg byes must also affect strike based on completed runs
+* wides with running must affect strike based on total completed runs
+* no ball with bat runs must affect strike based on total completed runs
+* no ball with byes/leg byes must affect strike as per completed runs
+
+### End of over strike rotation
+
+At the end of the over:
+
+* if total completed runs on the final legal ball is odd, batters would have already swapped during the run
+* after over completion, strike changes ends for next over
+* therefore the engine must correctly determine final striker for next over based on:
+
+  * whether batters crossed due to runs
+  * whether over ended
+* never apply “swap twice blindly”
+* the over-end logic must use final physical ends, not simplistic toggles
+
+### Wicket-related strike rules
+
+The engine must handle:
+
+* wicket on dot ball
+* wicket after odd runs completed
+* wicket after even runs completed
+* run out of striker
+* run out of non-striker
+* wicket on last ball of over
+* wicket with completed runs before dismissal
+* wicket that ends innings
+
+When a wicket falls:
+
+* determine which batter is out
+* determine whether new batter comes to striker or non-striker end based on:
+
+  * dismissal type
+  * whether batters crossed
+  * whether runs were completed
+  * whether it is end of over
+
+Examples that must be supported:
+
+* striker run out attempting second run after 1 completed
+* non-striker run out attempting second run
+* caught dismissal usually replaces striker
+* stumped replaces striker
+* run out on last ball of over with 1 completed run
+* run out on a wide with batters crossed
+
+---
+
+## 5. Wicket and Team Composition Logic
+
+The engine must enforce wicket limits based on batting side composition.
+
+### Rules
+
+* if team has N players, innings can lose at most N-1 wickets
+* innings ends when no further batter can come in
+* if only one batter remains not out, innings is all out
+* if player count is reduced due to absent players, batting capacity should reflect actual available batters
+* allow configurable rules for:
+
+  * full squad size
+  * playing XI only
+  * substitute restrictions
+  * last-man-standing mode if tournament supports it
+
+### Validations
+
+* cannot add wicket if innings already all out
+* cannot bring new batter if batting order exhausted
+* cannot mark batter out twice
+* cannot continue innings with missing striker/non-striker unless special last batter rule is enabled
+
+---
+
+## 6. Batting Order Logic
+
+The engine must support:
+
+* predefined batting order
+* flexible batter selection when wicket falls
+* validation that same player cannot enter twice
+* retired hurt players may return later if rule enabled
+* retired out counts as wicket if configured
+* absent hurt / did not bat states
+
+When wicket falls:
+
+* prompt/select next batter
+* ensure next batter is eligible
+* place batter at correct end based on dismissal and run completion logic
+
+---
+
+## 7. Bowling Logic
+
+Implement bowling validations:
+
+### Bowler restrictions
+
+* same bowler cannot bowl consecutive overs
+* bowler must belong to bowling team
+* bowler must not exceed max overs allowed by format/rules
+* partial over stats must remain accurate after edits/undo
+* super over may have separate bowler restrictions if configured
+
+### Bowler stat rules
+
+* wides count against bowler runs conceded
+* no balls count against bowler runs conceded
+* byes do not count against bowler runs conceded
+* leg byes do not count against bowler runs conceded
+* wicket credited to bowler for:
+
+  * bowled
+  * caught
+  * LBW
+  * stumped
+  * hit wicket
+* wicket not credited to bowler for:
+
+  * run out
+  * retired out
+  * obstructing field
+* maidens depend on total runs conceded from bowler account, not team extras that exclude bowler if your rules require that
+* maiden over logic must be configurable if wides/no balls break maiden automatically
+
+---
+
+## 8. Over Progression Logic
+
+The engine must manage overs exactly.
+
+### Rules
+
+* over completes only after configured number of legal balls
+* illegal balls extend the over
+* striker/non-striker ends must flip between overs
+* new bowler must be selected at start of new over
+* if innings ends before over complete, over should show partial balls, e.g. 17.4
+* if match format changes balls-per-over, engine must respect configured number, not hardcoded 6
+
+### Over-end validations
+
+* cannot start next over without selecting bowler
+* cannot continue same bowler in consecutive over unless custom rule allows
+* over summary should store:
+
+  * runs in over
+  * wickets in over
+  * legal balls
+  * extras
+  * start striker
+  * end striker
+
+---
+
+## 9. Max Overs and Innings Completion Logic
+
+The innings must end automatically when any valid terminal condition is reached.
+
+### Innings end conditions
+
+* max overs completed
+* all out
+* target achieved in chase
+* match abandoned
+* innings declared if long-format support exists
+* manually closed by admin with reason
+
+### Chase logic
+
+For second innings:
+
+* target = first innings total + 1
+* if chasing team reaches target, innings ends immediately
+* no further balls allowed after target reached
+* margin calculation:
+
+  * won by wickets
+  * won by runs
+  * tie
+  * no result
+
+### Overs logic
+
+* once max overs reached, no more balls can be entered
+* partial final over is valid if innings ends early by chase or all out
+* DLS/custom revised target may be supported as override
+
+---
+
+## 10. Run and Extras Allocation Logic
+
+The engine must separate:
+
+* team total
+* batter runs
+* bowler conceded runs
+* extras
+
+### Allocation rules
+
+* runs off bat add to batter and team
+* wides add to team and bowler, not batter
+* no-ball base run adds to team and bowler, not batter
+* no-ball bat runs add to batter, team, and bowler
+* byes add to team and extras, not batter, not bowler
+* leg byes add to team and extras, not batter, not bowler
+* no-ball + byes/leg byes:
+
+  * all added to team
+  * base no-ball to bowler
+  * byes/leg byes not to batter
+  * additional no-ball-associated running handled correctly in bowler/extras split
+* overthrow support should optionally be available
+
+The score breakdown must always reconcile:
+**team total = batter runs + extras**
+
+---
+
+## 11. Boundary and Ball-Faced Logic
+
+The engine must correctly update batter balls faced.
+
+### Batter ball faced rules
+
+Count ball faced for batter on:
+
+* legal dot ball
+* legal scoring shot
+* legal wicket ball unless special non-striker dismissal case
+* byes and leg byes on legal delivery count as ball faced
+  Do not count ball faced on:
+* wides
+* some no-ball cases depending on rules:
+
+  * no-ball with bat usually does not count as batter ball faced in limited overs scoring systems
+  * make this configurable if needed
+
+### Boundary stats
+
+* 4 credited only if runs scored off bat = 4
+* 6 credited only if runs scored off bat = 6
+* overthrows or all-run fours should not automatically count as boundary unless actual boundary off bat rule is met
+
+---
+
+## 12. Partnership Logic
+
+Track batting partnerships accurately:
+
+* current partnership runs
+* current partnership balls
+* partnership players
+* partnership start score
+* partnership ends on wicket except retired hurt if configured otherwise
+* new partnership starts immediately after wicket and new batter arrival
+
+Need support for:
+
+* run out of non-striker
+* wicket after completed runs
+* wicket on over-ending ball
+
+---
+
+## 13. Fall of Wickets Logic
+
+Store:
+
+* wicket number
+* score at dismissal
+* dismissed batter name
+* batter score at dismissal
+* over at dismissal
+
+Validation:
+
+* wicket number must match sequence
+* score at dismissal must equal innings total at wicket moment
+* cannot create fall-of-wicket entry without actual wicket
+
+---
+
+## 14. Result Logic
+
+At match end, auto-calculate:
+
+* winner
+* loser
+* margin
+* tie
+* no result
+* super over required flag if rule enabled
+
+### Margin rules
+
+* batting first team wins by runs
+* chasing team wins by wickets
+* tie if totals equal and all innings completed without target exceeded
+* no result if match not completed by rule
+
+---
+
+## 15. Super Over Logic
+
+If tournament supports super over:
+
+* create separate mini-innings
+* reset striker/non-striker/bowler selection
+* fixed wickets and balls/overs as per rules
+* winner by super over score
+* support repeated super overs if tied again and configured
+
+---
+
+## 16. Validation Rules to Prevent Broken Data
+
+The engine must block invalid actions such as:
+
+* scoring before striker/non-striker/bowler selected
+* selecting same player as striker and non-striker
+* selecting batter from wrong team
+* selecting bowler from batting team
+* adding ball after innings complete
+* exceeding max wickets
+* exceeding max overs
+* selecting already-out batter
+* selecting same bowler for consecutive over
+* changing past ball without recalculating all later state
+* deleting wicket ball without restoring batter states properly
+* ending over before legal ball count reached unless innings complete
+* continuing innings without two batters unless special rule enabled
+
+---
+
+## 17. Undo / Edit / Recalculation Logic
+
+The scoring engine must support reliable correction workflow.
+
+### Requirements
+
+* every ball stored as immutable event log entry
+* current score derived from replaying event log
+* undo last ball safely
+* edit any previous ball
+* delete any previous ball
+* recalculate all subsequent state after edit/delete
+* preserve audit log of who edited what and when
+
+This is critical because scoring mistakes happen often.
+
+---
+
+## 18. Commentary/Event Text Generation
+
+For each ball, auto-generate structured text:
+
+* over.ball notation
+* bowler to batter
+* event summary
+* updated score
+* wicket details if any
+* target/required runs if chase
+
+Example:
+
+* 12.3: Bowler to Striker, 1 run, pushed to long-on. Score 87/3
+* 18.5: Bowler to Striker, OUT! Caught at deep midwicket. Score 142/7
+
+---
+
+## 19. Required Derived Values
+
+The engine must auto-calculate:
+
+* current run rate
+* required run rate
+* remaining balls
+* remaining wickets
+* target left
+* batter strike rate
+* bowler economy
+* maiden overs
+* partnership runs
+* phase score:
+
+  * powerplay
+  * middle overs
+  * death overs
+* projected score if desired
+
+---
+
+## 20. Configurable Rules Engine
+
+Do not hardcode only one style of cricket. Support configurable rules for:
+
+* balls per over
+* max overs
+* max overs per bowler
+* powerplay length
+* innings count
+* super over enabled/disabled
+* free hit enabled/disabled
+* last man stands enabled/disabled
+* no-ball ball-faced rule
+* retired hurt return rule
+* whether wides can include extra running input
+* custom local tournament rules
+
+---
+
+## 21. Free Hit Logic
+
+If free hit is enabled:
+
+* a no-ball triggers next ball as free hit
+* on free hit, striker cannot be out by:
+
+  * bowled
+  * caught
+  * LBW
+  * stumped
+  * hit wicket
+* striker may still be out by:
+
+  * run out
+  * obstructing field
+  * handled ball if supported
+* wides/no-balls on free hit should carry forward free hit correctly to next legal delivery
+* free hit indicator must remain until a legal delivery is completed
+
+---
+
+## 22. Edge Cases That Must Work
+
+The scoring engine must correctly handle these scenarios:
+
+* odd run on last ball of over
+* even run on last ball of over
+* wicket on last ball of over
+* run out of non-striker after 1 completed run
+* stumping on wide
+* no ball hit for 4
+* no ball + 2 byes
+* bye with run out
+* leg bye with run out
+* innings ends on wicket
+* innings ends on target chase before over complete
+* innings ends exactly at over limit
+* innings tied at end of chase
+* batter retired hurt and returns later
+* bowler reaches max overs limit
+* team has fewer than 11 players
+* match with custom 5-ball or 8-ball over format
+* undo after wicket
+* undo after over completed
+* edit earlier ball that changes striker for many later balls
+
+---
+
+## 23. Suggested Technical Design
+
+Implement the scorer using:
+
+* event-sourced scoring log
+* deterministic state reducer
+* strong validations before committing each event
+* full recomputation after edits
+* pure functions for:
+
+  * applyBallEvent
+  * rotateStrike
+  * handleWicket
+  * completeOver
+  * checkInningsEnd
+  * recalculateScorecard
+
+The system should prefer correctness over shortcut UI logic.
+
+---
+
+## 24. Final Development Goal
+
+Build a scoring engine that behaves like an expert human scorer:
+
+* fast
+* accurate
+* undo-safe
+* edge-case resistant
+* tournament-rule configurable
+* impossible to corrupt through normal use
+
+Do not build only a UI. Build the **actual cricket logic engine** with clear state transitions, validations, and recalculation behavior.
