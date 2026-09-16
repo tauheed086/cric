@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { apiDelete, apiPost } from '../../api/client';
+import { apiDelete, apiPatch, apiPost } from '../../api/client';
 import { useApi } from '../../hooks/useApi';
-import { Card, LoadingSkeleton, SectionTitle } from '../../components/ui';
+import { Card, LoadingSkeleton, SectionTitle, TeamBadge } from '../../components/ui';
+import { ImageUpload } from '../../components/ImageUpload';
 
 const newTeamTemplate = {
   name: '',
@@ -15,14 +16,37 @@ const newTeamTemplate = {
 export function AdminTeamsPage() {
   const { data, loading, error, refetch } = useApi<any[]>('/admin/teams');
   const [form, setForm] = useState(newTeamTemplate);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const addTeam = async (event: React.FormEvent) => {
+  const startEdit = (team: any) => {
+    setEditingId(team.id);
+    setForm({
+      name: team.name || '',
+      shortName: team.shortName || '',
+      logoUrl: team.logoUrl || '',
+      jerseyPrimary: team.jerseyPrimary || '#22c55e',
+      jerseySecondary: team.jerseySecondary || '#0ea5e9',
+      managerName: team.managerName || '',
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm(newTeamTemplate);
+  };
+
+  const saveTeam = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
     try {
-      await apiPost('/admin/teams', form);
+      if (editingId) {
+        await apiPatch(`/admin/teams/${editingId}`, form);
+      } else {
+        await apiPost('/admin/teams', form);
+      }
       setForm(newTeamTemplate);
+      setEditingId(null);
       await refetch();
     } finally {
       setSaving(false);
@@ -37,14 +61,26 @@ export function AdminTeamsPage() {
   return (
     <div className="page-grid">
       <Card>
-        <SectionTitle title="Team Management" />
-        <form className="form-grid compact" onSubmit={addTeam}>
+        <SectionTitle title={editingId ? 'Edit Team' : 'Team Management'} />
+        <form className="form-grid compact" onSubmit={saveTeam}>
           <input placeholder="Team name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
           <input placeholder="Short name" value={form.shortName} onChange={(e) => setForm((f) => ({ ...f, shortName: e.target.value }))} />
-          <input placeholder="Manager" value={form.managerName} onChange={(e) => setForm((f) => ({ ...f, managerName: e.target.value }))} />
-          <button className="button primary" type="submit" disabled={saving || !form.name || !form.shortName}>
-            {saving ? 'Adding...' : 'Add Team'}
-          </button>
+          <input placeholder="Manager name (optional)" value={form.managerName} onChange={(e) => setForm((f) => ({ ...f, managerName: e.target.value }))} />
+          <ImageUpload
+            value={form.logoUrl}
+            onChange={(base64) => setForm((f) => ({ ...f, logoUrl: base64 }))}
+            label="Upload Team Logo (Stored in DB)"
+          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="button primary" type="submit" disabled={saving || !form.name || !form.shortName}>
+              {saving ? 'Saving...' : editingId ? 'Update Team' : 'Add Team'}
+            </button>
+            {editingId && (
+              <button className="button secondary" type="button" onClick={cancelEdit}>
+                Cancel
+              </button>
+            )}
+          </div>
         </form>
       </Card>
 
@@ -53,16 +89,24 @@ export function AdminTeamsPage() {
       <Card>
         <ul className="plain-list">
           {data?.map((team) => (
-            <li key={team.id}>
-              <div>
-                <strong>{team.name}</strong>
-                <span>
-                  {team.shortName} • {team.managerName ?? 'No manager'}
-                </span>
+            <li key={team.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <TeamBadge team={team} size="md" />
+                <div>
+                  <strong>{team.name}</strong>
+                  <div style={{ fontSize: 13, color: 'var(--text-soft)' }}>
+                    {team.shortName} • {team.managerName ?? 'No manager'}
+                  </div>
+                </div>
               </div>
-              <button className="button danger" onClick={() => removeTeam(team.id)}>
-                Delete
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="button secondary" onClick={() => startEdit(team)}>
+                  Edit
+                </button>
+                <button className="button danger" onClick={() => removeTeam(team.id)}>
+                  Delete
+                </button>
+              </div>
             </li>
           ))}
         </ul>

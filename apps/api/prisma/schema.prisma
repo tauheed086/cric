@@ -96,6 +96,8 @@ model Tournament {
   leaderboardRows       LeaderboardProjection[]
   auditLogs             AuditLog[]
   officials             Official[]
+  createdById           String?
+  createdBy             AdminUser?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
 }
 
 model SeasonSettings {
@@ -478,4 +480,21 @@ model UserSession {
   tokenHash        String
   createdAt        DateTime  @default(now())
   expiresAt        DateTime
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  SCORER
+}
+
+model AdminUser {
+  id           String       @id @default(cuid())
+  username     String       @unique
+  passwordHash String
+  name         String
+  role         AdminRole    @default(SCORER)
+  isActive     Boolean      @default(true)
+  tournaments  Tournament[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }

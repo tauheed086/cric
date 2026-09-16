@@ -1,10 +1,13 @@
 import type { MatchCard } from '@cric/types';
 import { useApi } from '../../hooks/useApi';
+import { useTournament } from '../../context/TournamentContext';
 import { Card, LoadingSkeleton, SectionTitle } from '../../components/ui';
 import { FixtureCard } from '../../components/FixtureCard';
 
 export function PublicResultsPage() {
-  const { data, loading, error } = useApi<MatchCard[]>('/public/results');
+  const { selectedTournamentId } = useTournament();
+  const path = selectedTournamentId ? `/public/results?tournamentId=${encodeURIComponent(selectedTournamentId)}` : '/public/results';
+  const { data, loading, error } = useApi<MatchCard[]>(path);
 
   return (
     <div className="page-grid">

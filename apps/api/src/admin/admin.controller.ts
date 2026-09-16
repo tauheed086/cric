@@ -9,7 +9,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AdminAuthGuard } from '../common/admin-auth.guard.js';
-import { CurrentAdmin } from '../common/current-admin.js';
+import { CurrentAdmin, CurrentAdminUser } from '../common/current-admin.js';
+import type { RequestAdminUser } from '../common/current-admin.js';
 import { AdminService } from './admin.service.js';
 import {
   AnnouncementDto,
@@ -35,41 +36,41 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('dashboard')
-  dashboard() {
-    return this.adminService.getDashboard();
+  dashboard(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.getDashboard(user);
   }
 
   @Post('tournament')
   upsertTournament(
     @Body() body: { tournament: UpsertTournamentDto; settings?: UpdateSettingsDto },
-    @CurrentAdmin() admin: string,
+    @CurrentAdminUser() user: RequestAdminUser,
   ) {
-    return this.adminService.upsertTournament(body.tournament, body.settings ?? null, String(admin));
+    return this.adminService.upsertTournament(body.tournament, body.settings ?? null, user);
   }
 
   @Get('settings')
-  getSettings() {
-    return this.adminService.getSettings();
+  getSettings(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.getSettings(user);
   }
 
   @Patch('settings')
-  updateSettings(@Body() dto: UpdateSettingsDto) {
-    return this.adminService.updateSettings(dto);
+  updateSettings(@Body() dto: UpdateSettingsDto, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.updateSettings(dto, user);
   }
 
   @Post('recompute')
-  recompute() {
-    return this.adminService.forceRecompute();
+  recompute(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.forceRecompute(user);
   }
 
   @Get('teams')
-  listTeams() {
-    return this.adminService.listTeams();
+  listTeams(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listTeams(user);
   }
 
   @Post('teams')
-  createTeam(@Body() dto: TeamDto) {
-    return this.adminService.createTeam(dto);
+  createTeam(@Body() dto: TeamDto, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.createTeam(dto, user);
   }
 
   @Patch('teams/:id')
@@ -83,13 +84,13 @@ export class AdminController {
   }
 
   @Get('players')
-  listPlayers() {
-    return this.adminService.listPlayers();
+  listPlayers(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listPlayers(user);
   }
 
   @Post('players')
-  createPlayer(@Body() dto: PlayerDto) {
-    return this.adminService.createPlayer(dto);
+  createPlayer(@Body() dto: PlayerDto, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.createPlayer(dto, user);
   }
 
   @Patch('players/:id')
@@ -103,13 +104,13 @@ export class AdminController {
   }
 
   @Get('venues')
-  listVenues() {
-    return this.adminService.listVenues();
+  listVenues(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listVenues(user);
   }
 
   @Post('venues')
-  createVenue(@Body() dto: VenueDto) {
-    return this.adminService.createVenue(dto);
+  createVenue(@Body() dto: VenueDto, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.createVenue(dto, user);
   }
 
   @Patch('venues/:id')
@@ -123,18 +124,18 @@ export class AdminController {
   }
 
   @Get('fixtures')
-  listFixtures() {
-    return this.adminService.listFixtures();
+  listFixtures(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listFixtures(user);
   }
 
   @Get('matches')
-  listMatches() {
-    return this.adminService.listMatches();
+  listMatches(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listMatches(user);
   }
 
   @Post('fixtures')
-  createFixture(@Body() dto: FixtureDto) {
-    return this.adminService.createFixture(dto);
+  createFixture(@Body() dto: FixtureDto, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.createFixture(dto, user);
   }
 
   @Patch('fixtures/:id')
@@ -148,8 +149,8 @@ export class AdminController {
   }
 
   @Get('matches/:matchId')
-  getMatch(@Param('matchId') matchId: string) {
-    return this.adminService.getMatch(matchId);
+  getMatch(@Param('matchId') matchId: string, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.getMatch(matchId, user);
   }
 
   @Post('matches/:matchId/toss')
@@ -203,23 +204,23 @@ export class AdminController {
   }
 
   @Get('awards')
-  listAwards() {
-    return this.adminService.listAwards();
+  listAwards(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listAwards(user);
   }
 
   @Post('awards')
-  upsertAward(@Body() dto: AwardDto, @CurrentAdmin() admin: string) {
-    return this.adminService.upsertAward(dto, String(admin));
+  upsertAward(@Body() dto: AwardDto, @CurrentAdmin() admin: string, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.upsertAward(dto, String(admin), user);
   }
 
   @Get('announcements')
-  listAnnouncements() {
-    return this.adminService.listAnnouncements();
+  listAnnouncements(@CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.listAnnouncements(user);
   }
 
   @Post('announcements')
-  createAnnouncement(@Body() dto: AnnouncementDto, @CurrentAdmin() admin: string) {
-    return this.adminService.createAnnouncement(dto, String(admin));
+  createAnnouncement(@Body() dto: AnnouncementDto, @CurrentAdmin() admin: string, @CurrentAdminUser() user: RequestAdminUser) {
+    return this.adminService.createAnnouncement(dto, String(admin), user);
   }
 
   @Patch('announcements/:id')

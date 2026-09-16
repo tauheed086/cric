@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { apiPost } from '../../api/client';
 import { useApi } from '../../hooks/useApi';
 import { useSse } from '../../hooks/useSse';
-import { Card, LoadingSkeleton, SectionTitle, StatusBadge } from '../../components/ui';
+import { Card, LoadingSkeleton, SectionTitle, StatusBadge, TeamBadge } from '../../components/ui';
 
 const runButtons = [0, 1, 2, 3, 4, 6] as const;
 const extrasButtons = ['WIDE', 'NO_BALL', 'BYE', 'LEG_BYE'] as const;
@@ -115,6 +115,17 @@ export function AdminScoringPage() {
   const [winnerTeamId, setWinnerTeamId] = useState('');
   const [autoNextBatter, setAutoNextBatter] = useState(true);
   const [autoNextBowler, setAutoNextBowler] = useState(true);
+  const [selectedMomId, setSelectedMomId] = useState('');
+  const [momSuccess, setMomSuccess] = useState<string | null>(null);
+
+  const lastInitializedMatchId = useRef<string | null>(null);
+
+  const handleSelectInnings = (targetInnings: 1 | 2) => {
+    setInningsNumber(targetInnings);
+    setStrikerId('');
+    setNonStrikerId('');
+    setBowlerId('');
+  };
 
   const refresh = useCallback(async () => {
     await Promise.all([fixtures.refetch(), players.refetch(), teams.refetch()]);
@@ -131,9 +142,39 @@ export function AdminScoringPage() {
 
   const activeMatchId = matchId || fixtures.data?.[0]?.match?.id;
   const activeMatch = matchId ? match.data : fixtures.data?.find((f) => f.match?.id === activeMatchId)?.match;
+  const isMatchLocked = activeMatch?.status === 'COMPLETED' || activeMatch?.status === 'ABANDONED';
+
+  useEffect(() => {
+    if (activeMatch?.id && activeMatch.id !== lastInitializedMatchId.current) {
+      lastInitializedMatchId.current = activeMatch.id;
+      const inningsList = (activeMatch.innings as MatchInningsRow[] | undefined) ?? [];
+      const hasInningsTwo = inningsList.some((i) => i.inningsNumber === 2);
+      if (activeMatch.currentInnings === 2 || (activeMatch.status === 'COMPLETED' && hasInningsTwo)) {
+        setInningsNumber(2);
+      } else {
+        setInningsNumber(1);
+      }
+    }
+  }, [activeMatch?.id, activeMatch?.currentInnings, activeMatch?.status, activeMatch?.innings]);
 
   const teamNameById = useMemo(() => new Map((teams.data ?? []).map((team) => [team.id, team.name])), [teams.data]);
   const playerNameById = useMemo(() => new Map((players.data ?? []).map((player) => [player.id, player.displayName])), [players.data]);
+  const teamMap = useMemo(() => new Map<string, any>((teams.data ?? []).map((t) => [t.id, t])), [teams.data]);
+
+  const getTeam = useCallback(
+    (teamId?: string | null) => {
+      if (!teamId) return null;
+      return (
+        teamMap.get(teamId) ??
+        (activeMatch?.teamAId === teamId
+          ? activeMatch.teamA
+          : activeMatch?.teamBId === teamId
+            ? activeMatch.teamB
+            : null)
+      );
+    },
+    [teamMap, activeMatch],
+  );
 
   const teamOptions = useMemo(
     () => teams.data?.filter((team) => team.id === activeMatch?.teamAId || team.id === activeMatch?.teamBId) ?? [],
@@ -198,19 +239,98 @@ export function AdminScoringPage() {
     return map;
   }, [activeMatch]);
 
-  const { battingPlayers, bowlingPlayers } = useMemo(() => {
-    const allPlayers = players.data ?? [];
-    const battingIds = squadPlayerIdsByTeam.get(inningsTeams.battingTeamId);
-    const bowlingIds = squadPlayerIdsByTeam.get(inningsTeams.bowlingTeamId);
+  const getPlayersForTeam = useCallback(
+    (teamId: string): Array<{ id: string; displayName: string }> => {
+      if (!teamId) return [];
 
-    const scopedBattingPlayers = battingIds ? allPlayers.filter((player) => battingIds.has(player.id)) : allPlayers;
-    const scopedBowlingPlayers = bowlingIds ? allPlayers.filter((player) => bowlingIds.has(player.id)) : allPlayers;
+      const allPlayers = players.data ?? [];
 
-    return {
-      battingPlayers: scopedBattingPlayers,
-      bowlingPlayers: scopedBowlingPlayers,
-    };
-  }, [players.data, squadPlayerIdsByTeam, inningsTeams]);
+      // 1. Squad selections for this team in this match
+      const squadIds = squadPlayerIdsByTeam.get(teamId);
+      if (squadIds && squadIds.size > 0) {
+        const squadList = allPlayers.filter((p) => squadIds.has(p.id));
+        if (squadList.length > 0) {
+          return [...squadList].sort((a, b) => a.displayName.localeCompare(b.displayName));
+        }
+      }
+
+      // 2. Team players from activeMatch (teamA or teamB)
+      let matchTeamObj: any = null;
+      if (activeMatch?.teamAId === teamId) {
+        matchTeamObj = activeMatch.teamA;
+      } else if (activeMatch?.teamBId === teamId) {
+        matchTeamObj = activeMatch.teamB;
+      }
+
+      if (matchTeamObj?.teamPlayers && matchTeamObj.teamPlayers.length > 0) {
+        const list = matchTeamObj.teamPlayers
+          .map((tp: any) => tp.player ?? allPlayers.find((p: any) => p.id === tp.playerId))
+          .filter(Boolean);
+        if (list.length > 0) {
+          return [...list].sort((a: any, b: any) => a.displayName.localeCompare(b.displayName));
+        }
+      }
+
+      // 3. Fallback to /admin/teams data (which includes teamPlayers)
+      const foundTeam = (teams.data ?? []).find((t: any) => t.id === teamId);
+      if (foundTeam?.teamPlayers && foundTeam.teamPlayers.length > 0) {
+        const list = foundTeam.teamPlayers
+          .map((tp: any) => tp.player ?? allPlayers.find((p: any) => p.id === tp.playerId))
+          .filter(Boolean);
+        if (list.length > 0) {
+          return [...list].sort((a: any, b: any) => a.displayName.localeCompare(b.displayName));
+        }
+      }
+
+      // 4. Fallback to /admin/players if teamPlayers relation is present
+      const teamMappedPlayers = allPlayers.filter((p: any) =>
+        p.teamPlayers?.some((tp: any) => tp.teamId === teamId),
+      );
+      if (teamMappedPlayers.length > 0) {
+        return [...teamMappedPlayers].sort((a: any, b: any) => a.displayName.localeCompare(b.displayName));
+      }
+
+      return [];
+    },
+    [squadPlayerIdsByTeam, players.data, activeMatch, teams.data],
+  );
+
+  const teamAPlayers = useMemo(
+    () => (activeMatch?.teamAId ? getPlayersForTeam(activeMatch.teamAId) : []),
+    [activeMatch?.teamAId, getPlayersForTeam],
+  );
+  const teamBPlayers = useMemo(
+    () => (activeMatch?.teamBId ? getPlayersForTeam(activeMatch.teamBId) : []),
+    [activeMatch?.teamBId, getPlayersForTeam],
+  );
+  const teamAName = useMemo(
+    () => (activeMatch?.teamAId ? teamNameById.get(activeMatch.teamAId) || activeMatch.teamA?.name || 'Team A' : 'Team A'),
+    [activeMatch, teamNameById],
+  );
+  const teamBName = useMemo(
+    () => (activeMatch?.teamBId ? teamNameById.get(activeMatch.teamBId) || activeMatch.teamB?.name || 'Team B' : 'Team B'),
+    [activeMatch, teamNameById],
+  );
+
+  const battingPlayers = useMemo(
+    () => getPlayersForTeam(inningsTeams.battingTeamId),
+    [getPlayersForTeam, inningsTeams.battingTeamId],
+  );
+
+  const bowlingPlayers = useMemo(
+    () => getPlayersForTeam(inningsTeams.bowlingTeamId),
+    [getPlayersForTeam, inningsTeams.bowlingTeamId],
+  );
+
+  const battingTeamName = useMemo(
+    () => teamNameById.get(inningsTeams.battingTeamId) ?? activeMatch?.teamA?.name ?? 'Batting Team',
+    [teamNameById, inningsTeams.battingTeamId, activeMatch],
+  );
+
+  const bowlingTeamName = useMemo(
+    () => teamNameById.get(inningsTeams.bowlingTeamId) ?? activeMatch?.teamB?.name ?? 'Bowling Team',
+    [teamNameById, inningsTeams.bowlingTeamId, activeMatch],
+  );
 
   const inningsRows = useMemo(
     () => ((activeMatch?.innings as MatchInningsRow[] | undefined) ?? []),
@@ -405,7 +525,8 @@ export function AdminScoringPage() {
       strikerId !== nonStrikerId &&
       !dismissedBatterIds.has(strikerId) &&
       !dismissedBatterIds.has(nonStrikerId) &&
-      !disabledBowlerIds.has(bowlerId),
+      !disabledBowlerIds.has(bowlerId) &&
+      !isMatchLocked,
   );
 
   const overHistory = useMemo(() => {
@@ -481,15 +602,16 @@ export function AdminScoringPage() {
       }
     }
 
+    const battingIdSet = new Set(battingPlayers.map((p) => p.id));
     for (const currentId of [strikerId, nonStrikerId]) {
-      if (currentId && !seen.has(currentId)) {
+      if (currentId && battingIdSet.has(currentId) && !seen.has(currentId)) {
         seen.add(currentId);
         ordered.push(currentId);
       }
     }
 
     return ordered;
-  }, [selectedInningsBalls, strikerId, nonStrikerId]);
+  }, [selectedInningsBalls, strikerId, nonStrikerId, battingPlayers]);
 
   const visibleBowlingIds = useMemo(() => {
     const ordered: string[] = [];
@@ -505,13 +627,14 @@ export function AdminScoringPage() {
       }
     }
 
-    if (bowlerId && !seen.has(bowlerId)) {
+    const bowlingIdSet = new Set(bowlingPlayers.map((p) => p.id));
+    if (bowlerId && bowlingIdSet.has(bowlerId) && !seen.has(bowlerId)) {
       seen.add(bowlerId);
       ordered.push(bowlerId);
     }
 
     return ordered;
-  }, [selectedInningsBalls, bowlerId]);
+  }, [selectedInningsBalls, bowlerId, bowlingPlayers]);
 
   const currentBowlerId = bowlerId || selectedInningsBalls[selectedInningsBalls.length - 1]?.bowlerId || '';
 
@@ -530,6 +653,11 @@ export function AdminScoringPage() {
     if (!activeMatchId) {
       return;
     }
+    if (isMatchLocked) {
+      const message = 'Match is completed. Editing is disabled.';
+      setActionError(message);
+      throw new Error(message);
+    }
 
     setSaving(true);
     setActionError(null);
@@ -542,6 +670,28 @@ export function AdminScoringPage() {
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Request failed');
       throw error;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveMom = async () => {
+    const targetPlayerId = selectedMomId || activeMatch?.momPlayerId;
+    if (!activeMatchId || !targetPlayerId) {
+      return;
+    }
+    setSaving(true);
+    setActionError(null);
+    setMomSuccess(null);
+    try {
+      await apiPost(`/admin/matches/${activeMatchId}/man-of-match`, { playerId: targetPlayerId });
+      await refresh();
+      if (matchId) {
+        await match.refetch();
+      }
+      setMomSuccess('Man of the Match saved successfully!');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Failed to update Man of the Match');
     } finally {
       setSaving(false);
     }
@@ -561,40 +711,54 @@ export function AdminScoringPage() {
   }) => {
     await post('/admin/matches/:id/score', payload);
 
-    let nextStrikerId = payload.strikerId;
-    let nextNonStrikerId = payload.nonStrikerId;
-    let nextBowlerId = payload.bowlerId;
-
     const isLegalDelivery = payload.extrasType !== 'WIDE' && payload.extrasType !== 'NO_BALL';
     const ballInOver = (legalBallsSoFar % 6) + 1;
     const overCompleted = isLegalDelivery && ballInOver === 6;
-    const deliveryRuns = payload.runsOffBat + (payload.extrasRuns ?? 0);
-    let strikeSwappedByRuns = false;
 
-    if (!payload.wicket && deliveryRuns % 2 === 1) {
-      nextStrikerId = payload.nonStrikerId;
-      nextNonStrikerId = payload.strikerId;
-      strikeSwappedByRuns = true;
+    let physicalRuns = 0;
+    if (payload.extrasType === 'BYE' || payload.extrasType === 'LEG_BYE') {
+      physicalRuns = payload.extrasRuns ?? 0;
+    } else if (!payload.extrasType) {
+      if (payload.runsOffBat !== 4 && payload.runsOffBat !== 6) {
+        physicalRuns = payload.runsOffBat;
+      }
+    } else if (payload.extrasType === 'NO_BALL') {
+      if (payload.runsOffBat !== 4 && payload.runsOffBat !== 6) {
+        physicalRuns = payload.runsOffBat;
+      }
+    } else if (payload.extrasType === 'WIDE') {
+      const penalty = 1;
+      const extraRun = Math.max((payload.extrasRuns ?? 1) - penalty, 0);
+      physicalRuns = extraRun;
     }
+
+    const runsRunOdd = physicalRuns % 2 === 1;
+
+    let nextStrikerId = payload.strikerId;
+    let nextNonStrikerId = payload.nonStrikerId;
+    let nextBowlerId = payload.bowlerId;
 
     if (payload.wicket && autoNextBatter) {
       const dismissedBatters = new Set(dismissedBatterIds);
       dismissedBatters.add(payload.strikerId);
 
+      const replacement = battingPlayers.find(
+        (player) => !dismissedBatters.has(player.id) && player.id !== payload.nonStrikerId,
+      );
+
       if (overCompleted) {
         nextStrikerId = payload.nonStrikerId;
-        const replacement = battingPlayers.find((player) => !dismissedBatters.has(player.id) && player.id !== nextStrikerId);
         nextNonStrikerId = replacement?.id ?? '';
       } else {
-        nextNonStrikerId = payload.nonStrikerId;
-        const replacement = battingPlayers.find((player) => !dismissedBatters.has(player.id) && player.id !== nextNonStrikerId);
         nextStrikerId = replacement?.id ?? '';
+        nextNonStrikerId = payload.nonStrikerId;
       }
-    }
-    if (!payload.wicket && overCompleted && !strikeSwappedByRuns) {
-      const temp = nextStrikerId;
-      nextStrikerId = nextNonStrikerId;
-      nextNonStrikerId = temp;
+    } else if (!payload.wicket) {
+      const playerAtEndS = runsRunOdd ? payload.nonStrikerId : payload.strikerId;
+      const playerAtEndNS = runsRunOdd ? payload.strikerId : payload.nonStrikerId;
+
+      nextStrikerId = overCompleted ? playerAtEndNS : playerAtEndS;
+      nextNonStrikerId = overCompleted ? playerAtEndS : playerAtEndNS;
     }
 
     if (autoNextBowler && overCompleted) {
@@ -629,22 +793,34 @@ export function AdminScoringPage() {
     <div className="page-grid">
       <Card>
         <SectionTitle title="Match Scoring Panel" action={<StatusBadge status={activeMatch.status} />} />
-        <p>
-          {activeMatch.matchNumber} | {teamNameById.get(activeMatch.teamAId) ?? activeMatch.teamAId} vs {teamNameById.get(activeMatch.teamBId) ?? activeMatch.teamBId}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '6px 0 10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 6, background: 'var(--bg-2)', border: '1px solid var(--line)', fontWeight: 700 }}>
+            {activeMatch.matchNumber}
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <TeamBadge team={getTeam(activeMatch.teamAId)} name={teamNameById.get(activeMatch.teamAId)} size="sm" />
+            <strong>{teamNameById.get(activeMatch.teamAId) ?? activeMatch.teamAId}</strong>
+          </span>
+          <span style={{ color: 'var(--text-soft)', fontWeight: 600, fontSize: 13 }}>vs</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <TeamBadge team={getTeam(activeMatch.teamBId)} name={teamNameById.get(activeMatch.teamBId)} size="sm" />
+            <strong>{teamNameById.get(activeMatch.teamBId) ?? activeMatch.teamBId}</strong>
+          </span>
+        </div>
         <small>{activeMatch.statusText}</small>
         {winningTeamName ? (
           <p style={{ marginTop: 10 }}>
             Winner: <strong>{winningTeamName}</strong>
           </p>
         ) : null}
+        {isMatchLocked ? <p style={{ marginTop: 10 }}>This match is locked. Score and match controls are disabled.</p> : null}
         {actionError ? <p style={{ color: 'var(--danger)', marginTop: 10 }}>{actionError}</p> : null}
       </Card>
 
       <Card>
         <SectionTitle title="Toss + Innings Controls" />
         <div className="inline-actions">
-          <select value={tossTeamId} onChange={(e) => setTossTeamId(e.target.value)}>
+          <select value={tossTeamId} disabled={saving || isMatchLocked} onChange={(e) => setTossTeamId(e.target.value)}>
             <option value="">Toss winner</option>
             {teamOptions.map((team) => (
               <option key={team.id} value={team.id}>
@@ -652,19 +828,19 @@ export function AdminScoringPage() {
               </option>
             ))}
           </select>
-          <select value={tossDecision} onChange={(e) => setTossDecision(e.target.value)}>
+          <select value={tossDecision} disabled={saving || isMatchLocked} onChange={(e) => setTossDecision(e.target.value)}>
             <option value="BAT">BAT</option>
             <option value="BOWL">BOWL</option>
           </select>
-          <button className="button secondary" disabled={!tossTeamId || saving} onClick={() => post('/admin/matches/:id/toss', { wonByTeamId: tossTeamId, decision: tossDecision })}>
+          <button className="button secondary" disabled={!tossTeamId || saving || isMatchLocked} onClick={() => post('/admin/matches/:id/toss', { wonByTeamId: tossTeamId, decision: tossDecision })}>
             Save Toss
           </button>
         </div>
         <div className="inline-actions">
-          <button className="button secondary" disabled={saving} onClick={() => post('/admin/matches/:id/start-innings', { inningsNumber: 1 })}>
+          <button className="button secondary" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/start-innings', { inningsNumber: 1 })}>
             Start Innings 1
           </button>
-          <button className="button secondary" disabled={saving} onClick={() => post('/admin/matches/:id/start-innings', { inningsNumber: 2 })}>
+          <button className="button secondary" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/start-innings', { inningsNumber: 2 })}>
             Start Innings 2
           </button>
           {/* <button className="button secondary" disabled={saving} onClick={() => post('/admin/matches/:id/end-innings')}>
@@ -675,25 +851,58 @@ export function AdminScoringPage() {
 
       <Card>
         <SectionTitle title="Ball Entry Controls" />
-        <p style={{ marginBottom: 12 }}>
-          Batting: <strong>{teamNameById.get(inningsTeams.battingTeamId) ?? inningsTeams.battingTeamId}</strong> | Bowling:{' '}
-          <strong>{teamNameById.get(inningsTeams.bowlingTeamId) ?? inningsTeams.bowlingTeamId}</strong>
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: 'var(--text-soft)' }}>Batting:</span>
+            <TeamBadge team={getTeam(inningsTeams.battingTeamId)} name={teamNameById.get(inningsTeams.battingTeamId)} size="sm" />
+            <strong>{teamNameById.get(inningsTeams.battingTeamId) ?? inningsTeams.battingTeamId}</strong>
+          </div>
+          <span style={{ color: 'var(--line)' }}>|</span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: 'var(--text-soft)' }}>Bowling:</span>
+            <TeamBadge team={getTeam(inningsTeams.bowlingTeamId)} name={teamNameById.get(inningsTeams.bowlingTeamId)} size="sm" />
+            <strong>{teamNameById.get(inningsTeams.bowlingTeamId) ?? inningsTeams.bowlingTeamId}</strong>
+          </div>
+        </div>
         <div className="innings-split-summary">
-          <div className={`innings-split-card ${liveInningsNumber === 1 ? 'is-active' : ''}`.trim()}>
-            <span className="innings-split-kicker">
-              {teamNameById.get(inningsOne?.battingTeamId ?? '') ?? '-'}, {inningsLabel(1)}
+          <button
+            type="button"
+            className={`innings-split-card ${inningsNumber === 1 ? 'is-active' : ''}`.trim()}
+            onClick={() => handleSelectInnings(1)}
+            aria-pressed={inningsNumber === 1}
+            title="Click to view 1st inning stats"
+          >
+            <span className="innings-split-kicker" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <TeamBadge team={getTeam(inningsOne?.battingTeamId)} name={teamNameById.get(inningsOne?.battingTeamId ?? '')} size="sm" />
+              <span>{teamNameById.get(inningsOne?.battingTeamId ?? '') ?? '-'}, {inningsLabel(1)}</span>
+              {inningsNumber === 1 ? (
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--accent)' }}>
+                  • Selected
+                </span>
+              ) : null}
             </span>
             <strong className="innings-split-score">{inningsSummaryLabel(inningsOne)}</strong>
             <span className="innings-split-rate">CRR {(inningsOne?.runRate ?? 0).toFixed(2)}</span>
-          </div>
-          <div className={`innings-split-card ${liveInningsNumber === 2 ? 'is-active' : ''}`.trim()}>
-            <span className="innings-split-kicker">
-              {teamNameById.get(inningsTwo?.battingTeamId ?? '') ?? '-'}, {inningsLabel(2)}
+          </button>
+          <button
+            type="button"
+            className={`innings-split-card ${inningsNumber === 2 ? 'is-active' : ''}`.trim()}
+            onClick={() => handleSelectInnings(2)}
+            aria-pressed={inningsNumber === 2}
+            title="Click to view 2nd inning stats"
+          >
+            <span className="innings-split-kicker" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <TeamBadge team={getTeam(inningsTwo?.battingTeamId)} name={teamNameById.get(inningsTwo?.battingTeamId ?? '')} size="sm" />
+              <span>{teamNameById.get(inningsTwo?.battingTeamId ?? '') ?? '-'}, {inningsLabel(2)}</span>
+              {inningsNumber === 2 ? (
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--accent)' }}>
+                  • Selected
+                </span>
+              ) : null}
             </span>
             <strong className="innings-split-score">{inningsSummaryLabel(inningsTwo)}</strong>
             <span className="innings-split-rate">CRR {(inningsTwo?.runRate ?? 0).toFixed(2)}</span>
-          </div>
+          </button>
         </div>
         {/* <div className="innings-scorecard">
           <div className="innings-scorecard-top">
@@ -797,50 +1006,88 @@ export function AdminScoringPage() {
         </div>
         <div className="form-grid compact">
           <label className="checkbox-row">
-            <input type="checkbox" checked={autoNextBatter} onChange={(e) => setAutoNextBatter(e.target.checked)} />
+            <input type="checkbox" checked={autoNextBatter} disabled={saving || isMatchLocked} onChange={(e) => setAutoNextBatter(e.target.checked)} />
             Auto select next batter on wicket
           </label>
           <label className="checkbox-row">
-            <input type="checkbox" checked={autoNextBowler} onChange={(e) => setAutoNextBowler(e.target.checked)} />
+            <input type="checkbox" checked={autoNextBowler} disabled={saving || isMatchLocked} onChange={(e) => setAutoNextBowler(e.target.checked)} />
             Auto select next bowler after over
           </label>
-          <select value={inningsNumber} onChange={(e) => setInningsNumber(Number(e.target.value) as 1 | 2)}>
+          <select value={inningsNumber} disabled={saving} onChange={(e) => handleSelectInnings(Number(e.target.value) as 1 | 2)}>
             <option value={1}>Innings 1</option>
             <option value={2}>Innings 2</option>
           </select>
-          <select value={strikerId} onChange={(e) => setStrikerId(e.target.value)}>
+          <select value={strikerId} disabled={saving || isMatchLocked} onChange={(e) => setStrikerId(e.target.value)}>
             <option value="">Striker</option>
-            {battingPlayers.map((player) => {
-              const figure = battingFiguresById.get(player.id) ?? { runs: 0, balls: 0, isOut: false, fours: 0, sixes: 0 };
-              const isInactive = figure.isOut || player.id === nonStrikerId;
-              return (
-                <option key={player.id} value={player.id} disabled={isInactive}>
-                  {batterOptionLabel(player.id, player.displayName)}
-                </option>
-              );
-            })}
+            {battingTeamName && battingPlayers.length > 0 ? (
+              <optgroup label={`${battingTeamName} (Batting)`}>
+                {battingPlayers.map((player) => {
+                  const figure = battingFiguresById.get(player.id) ?? { runs: 0, balls: 0, isOut: false, fours: 0, sixes: 0 };
+                  const isInactive = figure.isOut || player.id === nonStrikerId;
+                  return (
+                    <option key={player.id} value={player.id} disabled={isInactive}>
+                      {batterOptionLabel(player.id, player.displayName)}
+                    </option>
+                  );
+                })}
+              </optgroup>
+            ) : (
+              battingPlayers.map((player) => {
+                const figure = battingFiguresById.get(player.id) ?? { runs: 0, balls: 0, isOut: false, fours: 0, sixes: 0 };
+                const isInactive = figure.isOut || player.id === nonStrikerId;
+                return (
+                  <option key={player.id} value={player.id} disabled={isInactive}>
+                    {batterOptionLabel(player.id, player.displayName)}
+                  </option>
+                );
+              })
+            )}
           </select>
-          <select value={nonStrikerId} onChange={(e) => setNonStrikerId(e.target.value)}>
+          <select value={nonStrikerId} disabled={saving || isMatchLocked} onChange={(e) => setNonStrikerId(e.target.value)}>
             <option value="">Non-striker</option>
-            {battingPlayers.map((player) => {
-              const figure = battingFiguresById.get(player.id) ?? { runs: 0, balls: 0, isOut: false, fours: 0, sixes: 0 };
-              const isInactive = figure.isOut || player.id === strikerId;
-              return (
-                <option key={player.id} value={player.id} disabled={isInactive}>
-                  {batterOptionLabel(player.id, player.displayName)}
-                </option>
-              );
-            })}
+            {battingTeamName && battingPlayers.length > 0 ? (
+              <optgroup label={`${battingTeamName} (Batting)`}>
+                {battingPlayers.map((player) => {
+                  const figure = battingFiguresById.get(player.id) ?? { runs: 0, balls: 0, isOut: false, fours: 0, sixes: 0 };
+                  const isInactive = figure.isOut || player.id === strikerId;
+                  return (
+                    <option key={player.id} value={player.id} disabled={isInactive}>
+                      {batterOptionLabel(player.id, player.displayName)}
+                    </option>
+                  );
+                })}
+              </optgroup>
+            ) : (
+              battingPlayers.map((player) => {
+                const figure = battingFiguresById.get(player.id) ?? { runs: 0, balls: 0, isOut: false, fours: 0, sixes: 0 };
+                const isInactive = figure.isOut || player.id === strikerId;
+                return (
+                  <option key={player.id} value={player.id} disabled={isInactive}>
+                    {batterOptionLabel(player.id, player.displayName)}
+                  </option>
+                );
+              })
+            )}
           </select>
-          <select value={bowlerId} onChange={(e) => setBowlerId(e.target.value)}>
+          <select value={bowlerId} disabled={saving || isMatchLocked} onChange={(e) => setBowlerId(e.target.value)}>
             <option value="">Bowler</option>
-            {bowlingPlayers.map((player) => (
-              <option key={player.id} value={player.id} disabled={isBowlerInactive(player.id)}>
-                {bowlerOptionLabel(player.id, player.displayName)}
-              </option>
-            ))}
+            {bowlingTeamName && bowlingPlayers.length > 0 ? (
+              <optgroup label={`${bowlingTeamName} (Bowling)`}>
+                {bowlingPlayers.map((player) => (
+                  <option key={player.id} value={player.id} disabled={isBowlerInactive(player.id)}>
+                    {bowlerOptionLabel(player.id, player.displayName)}
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              bowlingPlayers.map((player) => (
+                <option key={player.id} value={player.id} disabled={isBowlerInactive(player.id)}>
+                  {bowlerOptionLabel(player.id, player.displayName)}
+                </option>
+              ))
+            )}
           </select>
-          <input value={commentary} onChange={(e) => setCommentary(e.target.value)} placeholder="Commentary note" />
+          <input value={commentary} disabled={saving || isMatchLocked} onChange={(e) => setCommentary(e.target.value)} placeholder="Commentary note" />
         </div>
 
         <div className="score-keypad">
@@ -848,7 +1095,7 @@ export function AdminScoringPage() {
             <button
               key={run}
               className="button score-btn"
-              disabled={!canSubmitBall || saving}
+              disabled={!canSubmitBall || saving || isMatchLocked}
               onClick={() =>
                 postBall({
                   inningsNumber,
@@ -865,7 +1112,7 @@ export function AdminScoringPage() {
           ))}
           <button
             className="button score-btn wicket"
-            disabled={!canSubmitBall || saving}
+            disabled={!canSubmitBall || saving || isMatchLocked}
             onClick={() =>
               postBall({
                 inningsNumber,
@@ -885,7 +1132,7 @@ export function AdminScoringPage() {
             <button
               key={extrasType}
               className="button score-btn"
-              disabled={!canSubmitBall || saving}
+              disabled={!canSubmitBall || saving || isMatchLocked}
               onClick={() =>
                 postBall({
                   inningsNumber,
@@ -902,13 +1149,13 @@ export function AdminScoringPage() {
               {extrasType}
             </button>
           ))}
-          <button className="button danger" disabled={saving} onClick={() => post('/admin/matches/:id/undo')}>
+          <button className="button danger" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/undo')}>
             Undo
           </button>
 <br />
           <div className="inline-actions">
           
-          <button className="button secondary" disabled={saving} onClick={() => post('/admin/matches/:id/end-innings')}>
+          <button className="button secondary" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/end-innings')}>
             End Match
           </button>
         </div>
@@ -918,16 +1165,16 @@ export function AdminScoringPage() {
       <Card>
         <SectionTitle title="Interruption Controls" />
         <div className="inline-actions">
-          <button className="button secondary" onClick={() => post('/admin/matches/:id/interruption', { type: 'RAIN_DELAY', statusText: 'Rain delay in progress' })}>
+          <button className="button secondary" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/interruption', { type: 'RAIN_DELAY', statusText: 'Rain delay in progress' })}>
             Rain Delay
           </button>
-          <button className="button secondary" onClick={() => post('/admin/matches/:id/interruption', { type: 'INJURY_BREAK', statusText: 'Injury break' })}>
+          <button className="button secondary" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/interruption', { type: 'INJURY_BREAK', statusText: 'Injury break' })}>
             Injury
           </button>
-          <button className="button secondary" onClick={() => post('/admin/matches/:id/interruption', { type: 'DRINKS', statusText: 'Drinks break' })}>
+          <button className="button secondary" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/interruption', { type: 'DRINKS', statusText: 'Drinks break' })}>
             Drinks
           </button>
-          <button className="button danger" onClick={() => post('/admin/matches/:id/interruption', { type: 'ABANDONED', statusText: 'Match abandoned due to weather' })}>
+          <button className="button danger" disabled={saving || isMatchLocked} onClick={() => post('/admin/matches/:id/interruption', { type: 'ABANDONED', statusText: 'Match abandoned due to weather' })}>
             Abandon
           </button>
         </div>
@@ -936,7 +1183,7 @@ export function AdminScoringPage() {
       <Card>
         <SectionTitle title="Result Publishing" />
         <div className="form-grid compact">
-          <select value={winnerTeamId} onChange={(e) => setWinnerTeamId(e.target.value)}>
+          <select value={winnerTeamId} disabled={saving || isMatchLocked} onChange={(e) => setWinnerTeamId(e.target.value)}>
             <option value="">Select winner</option>
             {teamOptions.map((team) => (
               <option key={team.id} value={team.id}>
@@ -944,11 +1191,57 @@ export function AdminScoringPage() {
               </option>
             ))}
           </select>
-          <input value={resultSummary} onChange={(e) => setResultSummary(e.target.value)} placeholder="Result summary" />
-          <button className="button primary" disabled={!resultSummary || saving} onClick={() => post('/admin/matches/:id/declare-result', { winnerTeamId: winnerTeamId || null, resultSummary })}>
+          <input value={resultSummary} disabled={saving || isMatchLocked} onChange={(e) => setResultSummary(e.target.value)} placeholder="Result summary" />
+          <button className="button primary" disabled={!resultSummary || saving || isMatchLocked} onClick={() => post('/admin/matches/:id/declare-result', { winnerTeamId: winnerTeamId || null, resultSummary })}>
             Publish Result
           </button>
         </div>
+      </Card>
+
+      <Card>
+        <SectionTitle title="Man of the Match" />
+        {momSuccess && (
+          <p style={{ color: '#22c55e', fontWeight: 500, marginBottom: '0.5rem' }}>{momSuccess}</p>
+        )}
+        <div className="form-grid compact">
+          <select
+            value={selectedMomId || activeMatch?.momPlayerId || ''}
+            disabled={saving || activeMatch?.status === 'ABANDONED'}
+            onChange={(e) => setSelectedMomId(e.target.value)}
+          >
+            <option value="">Select Man of the Match</option>
+            {teamAPlayers.length > 0 && (
+              <optgroup label={teamAName}>
+                {teamAPlayers.map((player) => (
+                  <option key={player.id} value={player.id}>
+                    {player.displayName}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {teamBPlayers.length > 0 && (
+              <optgroup label={teamBName}>
+                {teamBPlayers.map((player) => (
+                  <option key={player.id} value={player.id}>
+                    {player.displayName}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          <button
+            className="button primary"
+            disabled={(!selectedMomId && !activeMatch?.momPlayerId) || saving || activeMatch?.status === 'ABANDONED'}
+            onClick={saveMom}
+          >
+            {saving ? 'Saving...' : 'Save Man of the Match'}
+          </button>
+        </div>
+        {activeMatch?.momPlayerId && (
+          <p style={{ marginTop: '0.5rem', color: 'var(--color-text-muted)' }}>
+            Current MOM: <strong>{playerNameById.get(activeMatch.momPlayerId) || activeMatch.momPlayerId}</strong>
+          </p>
+        )}
       </Card>
     </div>
   );

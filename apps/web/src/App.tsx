@@ -22,6 +22,7 @@ import { AdminResultsPage } from './pages/admin/ResultsPage';
 import { AdminAwardsPage } from './pages/admin/AwardsPage';
 import { AdminAnnouncementsPage } from './pages/admin/AnnouncementsPage';
 import { AdminSettingsPage } from './pages/admin/SettingsPage';
+import { AdminUsersPage } from './pages/admin/UsersPage';
 
 function App() {
   return (
@@ -53,6 +54,7 @@ function App() {
         <Route path="awards" element={<AdminAwardsPage />} />
         <Route path="announcements" element={<AdminAnnouncementsPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
+        <Route path="users" element={<AdminUsersPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/public/home" replace />} />

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { LeaderboardRow } from '@cric/types';
 import { Card } from './ui';
 
@@ -9,7 +10,9 @@ export function LeaderboardBlock({ title, rows }: { title: string; rows: Leaderb
         {rows.slice(0, 8).map((row) => (
           <li key={row.playerId}>
             <div>
-              <strong>{row.playerName}</strong>
+              <Link to={`/public/players/${row.playerId}`} className="player-link">
+                <strong>{row.playerName}</strong>
+              </Link>
               <span>{row.teamName}</span>
             </div>
             <b>{row.metric}</b>
@@ -19,3 +22,4 @@ export function LeaderboardBlock({ title, rows }: { title: string; rows: Leaderb
     </Card>
   );
 }
+

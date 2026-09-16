@@ -2,16 +2,21 @@ import { useCallback, useMemo, useState } from 'react';
 import type { MatchCard } from '@cric/types';
 import { useApi } from '../../hooks/useApi';
 import { useSse } from '../../hooks/useSse';
+import { useTournament } from '../../context/TournamentContext';
 import { Card, EmptyState, LoadingSkeleton, PillTabs, SectionTitle } from '../../components/ui';
 import { FixtureCard } from '../../components/FixtureCard';
 
 const filters = ['ALL', 'UPCOMING', 'IN_PROGRESS', 'COMPLETED', 'ABANDONED', 'DELAYED'];
 
 export function PublicFixturesPage() {
+  const { selectedTournamentId } = useTournament();
   const [status, setStatus] = useState('ALL');
   const [date, setDate] = useState('');
   const path = useMemo(() => {
     const query = new URLSearchParams();
+    if (selectedTournamentId) {
+      query.set('tournamentId', selectedTournamentId);
+    }
     if (status !== 'ALL') {
       query.set('status', status);
     }
@@ -19,7 +24,7 @@ export function PublicFixturesPage() {
       query.set('date', date);
     }
     return `/public/fixtures${query.toString() ? `?${query.toString()}` : ''}`;
-  }, [status, date]);
+  }, [selectedTournamentId, status, date]);
 
   const { data, loading, error, refetch } = useApi<MatchCard[]>(path);
   const refreshFixtures = useCallback(() => {

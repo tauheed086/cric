@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AwardType, FixtureStatus } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { AdminRole, AwardType, FixtureStatus } from '@prisma/client';
 import { MatchEventType } from '@cric/types';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ScoringService } from '../scoring/scoring.service.js';
 import { ProjectionService } from '../scoring/projection.service.js';
 import { EventBusService } from '../events/event-bus.service.js';
+import type { RequestAdminUser } from '../common/current-admin.js';
 import type {
   AnnouncementDto,
   AwardDto,
@@ -32,21 +33,44 @@ export class AdminService {
     private readonly eventBus: EventBusService,
   ) {}
 
-  private async getTournament() {
+  private async getTournament(user?: RequestAdminUser, throwOnMissing = true) {
+    if (user && user.role === AdminRole.SCORER) {
+      const tournament = await this.prisma.tournament.findFirst({
+        where: { createdById: user.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!tournament && throwOnMissing) {
+        throw new NotFoundException('You have not created any tournament yet. Please create your tournament first.');
+      }
+      return tournament;
+    }
+
     const tournament = await this.prisma.tournament.findFirst({
       where: { isActive: true },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
     });
-    if (!tournament) {
+    if (!tournament && throwOnMissing) {
       throw new NotFoundException('Tournament not configured');
     }
     return tournament;
   }
 
-  async upsertTournament(dto: UpsertTournamentDto, settings: UpdateSettingsDto | null, actor: string) {
-    const existing = await this.prisma.tournament.findFirst({
-      orderBy: { createdAt: 'asc' },
-    });
+  async upsertTournament(
+    dto: UpsertTournamentDto,
+    settings: UpdateSettingsDto | null,
+    user: RequestAdminUser,
+  ) {
+    let existing = null;
+    if (user.role === AdminRole.SCORER) {
+      existing = await this.prisma.tournament.findFirst({
+        where: { createdById: user.id },
+        orderBy: { createdAt: 'desc' },
+      });
+    } else {
+      existing = await this.prisma.tournament.findFirst({
+        orderBy: { createdAt: 'desc' },
+      });
+    }
 
     const tournament = existing
       ? await this.prisma.tournament.update({
@@ -56,6 +80,7 @@ export class AdminService {
       : await this.prisma.tournament.create({
           data: {
             ...dto,
+            createdById: user.id !== 'super_admin' ? user.id : null,
             isActive: true,
           },
         });
@@ -66,6 +91,9 @@ export class AdminService {
         create: {
           tournamentId: tournament.id,
           ...settings,
+          format: settings.format ?? 'T20',
+          oversPerInnings: settings.oversPerInnings ?? 20,
+          numberOfTeams: settings.numberOfTeams ?? 8,
         },
         update: settings,
       });
@@ -75,7 +103,7 @@ export class AdminService {
       eventType: MatchEventType.MATCH_UPDATED,
       entityType: 'tournament',
       entityId: tournament.id,
-      updatedBy: actor,
+      updatedBy: user.name,
       version: Date.now(),
       payload: tournament,
     });
@@ -83,8 +111,22 @@ export class AdminService {
     return tournament;
   }
 
-  async getDashboard() {
-    const tournament = await this.getTournament();
+  async getDashboard(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) {
+      return {
+        tournament: null,
+        hasTournament: false,
+        cards: {
+          matchesToday: 0,
+          pendingScoreUpdates: 0,
+          inProgressMatches: 0,
+          completedMatches: 0,
+        },
+        alerts: [],
+      };
+    }
+
     const [matchesToday, pending, inProgress, completed, alerts] = await Promise.all([
       this.prisma.match.count({
         where: {
@@ -125,6 +167,7 @@ export class AdminService {
 
     return {
       tournament,
+      hasTournament: true,
       cards: {
         matchesToday,
         pendingScoreUpdates: pending,
@@ -135,19 +178,27 @@ export class AdminService {
     };
   }
 
-  async listTeams() {
-    const tournament = await this.getTournament();
+  async listTeams(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.team.findMany({
       where: { tournamentId: tournament.id },
+      include: {
+        teamPlayers: {
+          include: {
+            player: true,
+          },
+        },
+      },
       orderBy: { name: 'asc' },
     });
   }
 
-  async createTeam(dto: TeamDto) {
-    const tournament = await this.getTournament();
+  async createTeam(dto: TeamDto, user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
     return this.prisma.team.create({
       data: {
-        tournamentId: tournament.id,
+        tournamentId: tournament!.id,
         ...dto,
       },
     });
@@ -161,25 +212,36 @@ export class AdminService {
   }
 
   async deleteTeam(id: string) {
+    const associatedCount = await this.prisma.fixture.count({
+      where: { OR: [{ teamAId: id }, { teamBId: id }] },
+    });
+    if (associatedCount > 0) {
+      throw new BadRequestException('Cannot delete team because it is scheduled in fixtures or matches');
+    }
     return this.prisma.team.delete({ where: { id } });
   }
 
-  async listPlayers() {
-    const tournament = await this.getTournament();
+  async listPlayers(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.player.findMany({
       where: { tournamentId: tournament.id },
+      include: {
+        teamPlayers: true,
+      },
       orderBy: { displayName: 'asc' },
     });
   }
 
-  async createPlayer(dto: PlayerDto) {
-    const tournament = await this.getTournament();
+  async createPlayer(dto: PlayerDto, user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
+    const displayName = dto.displayName?.trim() || [dto.firstName, dto.lastName].filter(Boolean).join(' ').trim() || 'Player';
     const player = await this.prisma.player.create({
       data: {
-        tournamentId: tournament.id,
+        tournamentId: tournament!.id,
         firstName: dto.firstName,
         lastName: dto.lastName,
-        displayName: dto.displayName,
+        displayName,
         role: dto.role,
         battingHand: dto.battingHand,
         bowlingType: dto.bowlingType,
@@ -199,12 +261,13 @@ export class AdminService {
   }
 
   async updatePlayer(id: string, dto: PlayerDto) {
+    const displayName = dto.displayName?.trim() || [dto.firstName, dto.lastName].filter(Boolean).join(' ').trim() || 'Player';
     const updated = await this.prisma.player.update({
       where: { id },
       data: {
         firstName: dto.firstName,
         lastName: dto.lastName,
-        displayName: dto.displayName,
+        displayName,
         role: dto.role,
         battingHand: dto.battingHand,
         bowlingType: dto.bowlingType,
@@ -251,19 +314,20 @@ export class AdminService {
     });
   }
 
-  async listVenues() {
-    const tournament = await this.getTournament();
+  async listVenues(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.venue.findMany({
       where: { tournamentId: tournament.id },
       orderBy: { name: 'asc' },
     });
   }
 
-  async createVenue(dto: VenueDto) {
-    const tournament = await this.getTournament();
+  async createVenue(dto: VenueDto, user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
     return this.prisma.venue.create({
       data: {
-        tournamentId: tournament.id,
+        tournamentId: tournament!.id,
         ...dto,
       },
     });
@@ -277,25 +341,57 @@ export class AdminService {
   }
 
   async deleteVenue(id: string) {
+    const associatedCount = await this.prisma.fixture.count({
+      where: { venueId: id },
+    });
+    if (associatedCount > 0) {
+      throw new BadRequestException('Cannot delete venue because fixtures or matches are scheduled at this venue');
+    }
     return this.prisma.venue.delete({ where: { id } });
   }
 
-  async listFixtures() {
-    const tournament = await this.getTournament();
+  async listFixtures(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.fixture.findMany({
       where: { tournamentId: tournament.id },
       include: {
-        teamA: true,
-        teamB: true,
+        teamA: {
+          include: {
+            teamPlayers: {
+              include: {
+                player: true,
+              },
+            },
+          },
+        },
+        teamB: {
+          include: {
+            teamPlayers: {
+              include: {
+                player: true,
+              },
+            },
+          },
+        },
         venue: true,
-        match: true,
+        match: {
+          include: {
+            squadSelections: {
+              include: {
+                player: true,
+              },
+            },
+          },
+        },
       },
       orderBy: { startsAt: 'asc' },
     });
   }
 
-  async listMatches() {
-    const tournament = await this.getTournament();
+  async listMatches(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.match.findMany({
       where: { tournamentId: tournament.id },
       include: {
@@ -307,12 +403,15 @@ export class AdminService {
     });
   }
 
-  async createFixture(dto: FixtureDto) {
-    const tournament = await this.getTournament();
+  async createFixture(dto: FixtureDto, user?: RequestAdminUser) {
+    if (dto.teamAId === dto.teamBId) {
+      throw new BadRequestException('Team A and Team B must be different teams');
+    }
+    const tournament = await this.getTournament(user, true);
     return this.prisma.$transaction(async (tx) => {
       const fixture = await tx.fixture.create({
         data: {
-          tournamentId: tournament.id,
+          tournamentId: tournament!.id,
           matchNumber: dto.matchNumber,
           stage: dto.stage,
           teamAId: dto.teamAId,
@@ -325,7 +424,7 @@ export class AdminService {
 
       const match = await tx.match.create({
         data: {
-          tournamentId: tournament.id,
+          tournamentId: tournament!.id,
           fixtureId: fixture.id,
           teamAId: dto.teamAId,
           teamBId: dto.teamBId,
@@ -342,46 +441,115 @@ export class AdminService {
     });
   }
 
+
   async updateFixture(id: string, dto: FixtureDto) {
-    const updated = await this.prisma.fixture.update({
-      where: { id },
-      data: {
-        matchNumber: dto.matchNumber,
-        stage: dto.stage,
-        teamAId: dto.teamAId,
-        teamBId: dto.teamBId,
-        venueId: dto.venueId,
-        startsAt: new Date(dto.startsAt),
-      },
-    });
+    if (dto.teamAId === dto.teamBId) {
+      throw new BadRequestException('Team A and Team B must be different teams');
+    }
 
-    await this.prisma.match.update({
+    const match = await this.prisma.match.findUnique({
       where: { fixtureId: id },
-      data: {
-        matchNumber: dto.matchNumber,
-        stage: dto.stage,
-        teamAId: dto.teamAId,
-        teamBId: dto.teamBId,
-        venueId: dto.venueId,
-        startsAt: new Date(dto.startsAt),
+      include: {
+        ballEvents: { select: { id: true }, take: 1 },
       },
     });
 
-    return updated;
+    if (match && match.ballEvents.length > 0 && (match.teamAId !== dto.teamAId || match.teamBId !== dto.teamBId)) {
+      throw new BadRequestException('Cannot change teams for a match that already has ball scoring recorded');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.fixture.update({
+        where: { id },
+        data: {
+          matchNumber: dto.matchNumber,
+          stage: dto.stage,
+          teamAId: dto.teamAId,
+          teamBId: dto.teamBId,
+          venueId: dto.venueId,
+          startsAt: new Date(dto.startsAt),
+        },
+      });
+
+      await tx.match.update({
+        where: { fixtureId: id },
+        data: {
+          matchNumber: dto.matchNumber,
+          stage: dto.stage,
+          teamAId: dto.teamAId,
+          teamBId: dto.teamBId,
+          venueId: dto.venueId,
+          startsAt: new Date(dto.startsAt),
+        },
+      });
+
+      return updated;
+    });
   }
 
   async deleteFixture(id: string) {
-    await this.prisma.match.deleteMany({ where: { fixtureId: id } });
-    return this.prisma.fixture.delete({ where: { id } });
+    const match = await this.prisma.match.findUnique({
+      where: { fixtureId: id },
+      include: {
+        ballEvents: { select: { id: true }, take: 1 },
+      },
+    });
+
+    if (match && match.ballEvents.length > 0) {
+      throw new BadRequestException('Cannot delete fixture because match has live ball scoring data recorded');
+    }
+
+    if (match && (match.status === 'COMPLETED' || match.status === 'INNINGS_1' || match.status === 'INNINGS_2')) {
+      throw new BadRequestException('Cannot delete fixture because match has already started or completed');
+    }
+
+    const tournamentId = match?.tournamentId;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.match.deleteMany({ where: { fixtureId: id } });
+      return tx.fixture.delete({ where: { id } });
+    });
+
+    if (tournamentId) {
+      await Promise.all([
+        this.projections.rebuildPointsTable(tournamentId),
+        this.projections.rebuildLeaderboards(tournamentId),
+      ]);
+    }
+
+    return result;
   }
 
-  async getMatch(matchId: string) {
-    return this.prisma.match.findUnique({
+  async getMatch(matchId: string, user?: RequestAdminUser) {
+    const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
+        tournament: { select: { id: true, createdById: true } },
         innings: true,
         toss: true,
-        squadSelections: true,
+        teamA: {
+          include: {
+            teamPlayers: {
+              include: {
+                player: true,
+              },
+            },
+          },
+        },
+        teamB: {
+          include: {
+            teamPlayers: {
+              include: {
+                player: true,
+              },
+            },
+          },
+        },
+        squadSelections: {
+          include: {
+            player: true,
+          },
+        },
         ballEvents: {
           where: {
             isVoided: false,
@@ -405,6 +573,12 @@ export class AdminService {
         },
       },
     });
+
+    if (match && user?.role === AdminRole.SCORER && match.tournament.createdById !== user.id) {
+      throw new ForbiddenException('You can only access matches of tournaments created by you');
+    }
+
+    return match;
   }
 
   updateToss(matchId: string, dto: TossDto, actor: string) {
@@ -455,8 +629,9 @@ export class AdminService {
     return this.scoring.setManOfMatch(matchId, dto.playerId, actor);
   }
 
-  async listAwards() {
-    const tournament = await this.getTournament();
+  async listAwards(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.award.findMany({
       where: { tournamentId: tournament.id },
       include: { player: true },
@@ -464,15 +639,15 @@ export class AdminService {
     });
   }
 
-  async upsertAward(dto: AwardDto, actor: string) {
-    const tournament = await this.getTournament();
+  async upsertAward(dto: AwardDto, actor: string, user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
     if (dto.type === AwardType.MAN_OF_THE_MATCH && !dto.matchId) {
       throw new NotFoundException('matchId required for Man of the Match');
     }
 
     const existing = await this.prisma.award.findFirst({
       where: {
-        tournamentId: tournament.id,
+        tournamentId: tournament!.id,
         type: dto.type,
         matchId: dto.matchId ?? null,
       },
@@ -489,7 +664,7 @@ export class AdminService {
         })
       : await this.prisma.award.create({
           data: {
-            tournamentId: tournament.id,
+            tournamentId: tournament!.id,
             type: dto.type,
             playerId: dto.playerId,
             matchId: dto.matchId ?? null,
@@ -510,19 +685,20 @@ export class AdminService {
     return award;
   }
 
-  async listAnnouncements() {
-    const tournament = await this.getTournament();
+  async listAnnouncements(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return [];
     return this.prisma.announcement.findMany({
       where: { tournamentId: tournament.id },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async createAnnouncement(dto: AnnouncementDto, actor: string) {
-    const tournament = await this.getTournament();
+  async createAnnouncement(dto: AnnouncementDto, actor: string, user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
     const announcement = await this.prisma.announcement.create({
       data: {
-        tournamentId: tournament.id,
+        tournamentId: tournament!.id,
         title: dto.title,
         body: dto.body,
         isPublished: dto.isPublished ?? true,
@@ -569,32 +745,36 @@ export class AdminService {
     return this.prisma.announcement.delete({ where: { id } });
   }
 
-  async getSettings() {
-    const tournament = await this.getTournament();
+  async getSettings(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, false);
+    if (!tournament) return null;
     return this.prisma.seasonSettings.findUnique({
       where: { tournamentId: tournament.id },
     });
   }
 
-  async updateSettings(dto: UpdateSettingsDto) {
-    const tournament = await this.getTournament();
+  async updateSettings(dto: UpdateSettingsDto, user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
     const settings = await this.prisma.seasonSettings.upsert({
-      where: { tournamentId: tournament.id },
+      where: { tournamentId: tournament!.id },
       create: {
-        tournamentId: tournament.id,
+        tournamentId: tournament!.id,
         ...dto,
+        format: dto.format ?? 'T20',
+        oversPerInnings: dto.oversPerInnings ?? 20,
+        numberOfTeams: dto.numberOfTeams ?? 8,
       },
       update: dto,
     });
 
-    await this.projections.rebuildPointsTable(tournament.id);
+    await this.projections.rebuildPointsTable(tournament!.id);
     return settings;
   }
 
-  async forceRecompute() {
-    const tournament = await this.getTournament();
-    await this.projections.rebuildPointsTable(tournament.id);
-    await this.projections.rebuildLeaderboards(tournament.id);
+  async forceRecompute(user?: RequestAdminUser) {
+    const tournament = await this.getTournament(user, true);
+    await this.projections.rebuildPointsTable(tournament!.id);
+    await this.projections.rebuildLeaderboards(tournament!.id);
     return { ok: true };
   }
 }

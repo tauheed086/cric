@@ -5,13 +5,9 @@
     "moduleResolution": "NodeNext",
     "target": "ES2022",
     "outDir": "dist",
-    "rootDir": "src",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "types": ["node", "jest"],
-    "paths": {
-      "@cric/types": ["../../packages/types/src"]
-    }
+    "types": ["node", "jest"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "prisma/**/*.ts"]
 }

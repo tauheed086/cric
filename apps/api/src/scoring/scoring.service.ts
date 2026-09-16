@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ExtrasType, MatchInterruptionType, MatchStatus } from '@prisma/client';
+import { AwardType, ExtrasType, MatchInterruptionType, MatchStatus } from '@prisma/client';
 import { MatchEventType, type BallInput } from '@cric/types';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectionService } from './projection.service.js';
@@ -10,6 +10,7 @@ function toOvers(balls: number): string {
 }
 
 const BALLS_PER_OVER = 6;
+const LOCKED_MATCH_STATUSES = new Set<MatchStatus>([MatchStatus.COMPLETED, MatchStatus.ABANDONED]);
 
 @Injectable()
 export class ScoringService {
@@ -55,6 +56,12 @@ export class ScoringService {
       throw new NotFoundException('Match not found');
     }
     return match;
+  }
+
+  private assertMatchIsEditable(match: { status: MatchStatus }) {
+    if (LOCKED_MATCH_STATUSES.has(match.status)) {
+      throw new BadRequestException('Match already finished');
+    }
   }
 
   private legalDelivery(extrasType?: ExtrasType | null): boolean {
@@ -209,14 +216,18 @@ export class ScoringService {
     const overs = await this.prisma.over.findMany({ where: { inningsId } });
     for (const over of overs) {
       const overEvents = events.filter((ball) => ball.overId === over.id);
-      await this.prisma.over.update({
-        where: { id: over.id },
-        data: {
-          runs: overEvents.reduce((sum, ball) => sum + ball.runsOffBat + ball.extrasRuns, 0),
-          wickets: overEvents.filter((ball) => ball.wicket).length,
-          balls: overEvents.filter((ball) => ball.isValidDelivery).length,
-        },
-      });
+      if (overEvents.length === 0) {
+        await this.prisma.over.delete({ where: { id: over.id } });
+      } else {
+        await this.prisma.over.update({
+          where: { id: over.id },
+          data: {
+            runs: overEvents.reduce((sum, ball) => sum + ball.runsOffBat + ball.extrasRuns, 0),
+            wickets: overEvents.filter((ball) => ball.wicket).length,
+            balls: overEvents.filter((ball) => ball.isValidDelivery).length,
+          },
+        });
+      }
     }
 
     return innings;
@@ -288,7 +299,7 @@ export class ScoringService {
             target: match.targetRuns,
           }
         : null,
-      pointsPreview: pointsRows.slice(0, 5),
+      pointsPreview: (pointsRows ?? []).slice(0, 5),
       updatedAt: match.updatedAt,
     };
 
@@ -319,6 +330,7 @@ export class ScoringService {
 
   async updateToss(matchId: string, wonByTeamId: string, decision: string, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    this.assertMatchIsEditable(match);
 
     await this.prisma.$transaction([
       this.prisma.toss.upsert({
@@ -359,11 +371,12 @@ export class ScoringService {
   }
 
   async setPlayingXI(matchId: string, teamId: string, playerIds: string[], updatedBy: string) {
-    if (playerIds.length !== 11) {
-      throw new BadRequestException('Playing XI must contain 11 players');
+    if (playerIds.length < 2 || playerIds.length > 11) {
+      throw new BadRequestException('Playing squad must contain between 2 and 11 players');
     }
 
     const match = await this.getMatch(matchId);
+    this.assertMatchIsEditable(match);
 
     await this.prisma.$transaction([
       this.prisma.squadSelection.deleteMany({ where: { matchId, teamId } }),
@@ -398,6 +411,7 @@ export class ScoringService {
 
   async startInnings(matchId: string, inningsNumber: 1 | 2, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    this.assertMatchIsEditable(match);
     let innings1ForChase:
       | {
           battingTeamId: string;
@@ -497,10 +511,7 @@ export class ScoringService {
 
   async recordBall(matchId: string, input: BallInput, updatedBy: string) {
     const { match, innings } = await this.resolveInnings(matchId, input.inningsNumber);
-
-    if (match.status === MatchStatus.COMPLETED || match.status === MatchStatus.ABANDONED) {
-      throw new BadRequestException('Match already finished');
-    }
+    this.assertMatchIsEditable(match);
 
     if (innings.isCompleted) {
       throw new BadRequestException('Innings already completed');
@@ -519,6 +530,9 @@ export class ScoringService {
         inningsId: innings.id,
         isVoided: false,
       },
+      include: {
+        wicketEvent: true,
+      },
       orderBy: { sequence: 'asc' },
     });
 
@@ -526,10 +540,45 @@ export class ScoringService {
       throw new BadRequestException('Target already achieved in this innings');
     }
 
+    const dismissedBatterIds = new Set(
+      nonVoided
+        .filter((row) => row.wicket)
+        .map((row) => row.wicketEvent?.dismissedPlayerId ?? row.strikerId),
+    );
+
+    if (dismissedBatterIds.has(input.strikerId)) {
+      throw new BadRequestException('Selected striker is already out');
+    }
+
+    if (dismissedBatterIds.has(input.nonStrikerId)) {
+      throw new BadRequestException('Selected non-striker is already out');
+    }
+
+    const effectiveDismissedId = input.wicket
+      ? (input.dismissedPlayerId ?? input.strikerId)
+      : null;
+
     if (input.wicket) {
-      const alreadyOut = nonVoided.some((row) => row.wicket && row.strikerId === input.strikerId);
-      if (alreadyOut) {
-        throw new BadRequestException('Selected striker is already out');
+      if (effectiveDismissedId !== input.strikerId && effectiveDismissedId !== input.nonStrikerId) {
+        throw new BadRequestException('Dismissed player must be either the striker or non-striker');
+      }
+
+      if (input.extrasType === 'WIDE') {
+        const allowedWideWickets = ['RUN_OUT', 'STUMPED', 'HIT_WICKET', 'OBSTRUCTING_THE_FIELD'];
+        if (input.wicketType && !allowedWideWickets.includes(input.wicketType)) {
+          throw new BadRequestException(`Cannot be dismissed as ${input.wicketType} on a wide`);
+        }
+      }
+
+      if (input.extrasType === 'NO_BALL') {
+        const allowedNoBallWickets = ['RUN_OUT', 'HIT_THE_BALL_TWICE', 'OBSTRUCTING_THE_FIELD'];
+        if (input.wicketType && !allowedNoBallWickets.includes(input.wicketType)) {
+          throw new BadRequestException(`Cannot be dismissed as ${input.wicketType} on a no ball`);
+        }
+      }
+
+      if (['BOWLED', 'CAUGHT', 'LBW', 'STUMPED', 'HIT_WICKET'].includes(input.wicketType ?? '') && effectiveDismissedId !== input.strikerId) {
+        throw new BadRequestException(`${input.wicketType} can only apply to the striker`);
       }
     }
 
@@ -565,7 +614,12 @@ export class ScoringService {
       throw new BadRequestException(`Innings already reached over limit (${maxLegalBalls / BALLS_PER_OVER} overs)`);
     }
 
-    const sequence = (await this.prisma.ballEvent.count({ where: { matchId } })) + 1;
+    const lastBallEvent = await this.prisma.ballEvent.findFirst({
+      where: { matchId },
+      orderBy: { sequence: 'desc' },
+      select: { sequence: true },
+    });
+    const sequence = (lastBallEvent?.sequence ?? 0) + 1;
     const overNumber = Math.floor(legalBallsSoFar / BALLS_PER_OVER) + 1;
     const ballInOver = (legalBallsSoFar % BALLS_PER_OVER) + 1;
 
@@ -645,7 +699,7 @@ export class ScoringService {
         data: {
           ballEventId: event.id,
           dismissalType: input.wicketType ?? 'OUT',
-          dismissedPlayerId: input.strikerId,
+          dismissedPlayerId: effectiveDismissedId,
         },
       });
     }
@@ -733,6 +787,9 @@ export class ScoringService {
 
   async undoLastBall(matchId: string, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    if (match.status === MatchStatus.ABANDONED) {
+      throw new BadRequestException('Cannot undo ball on abandoned match');
+    }
 
     const last = await this.prisma.ballEvent.findFirst({
       where: {
@@ -753,15 +810,44 @@ export class ScoringService {
       },
     });
 
+    const lastInnings = await this.prisma.innings.findUnique({
+      where: { id: last.inningsId },
+    });
+
+    if (lastInnings?.isCompleted) {
+      await this.prisma.innings.update({
+        where: { id: last.inningsId },
+        data: { isCompleted: false },
+      });
+    }
+
     await this.recomputeInnings(last.inningsId);
+
+    const revertedStatus =
+      lastInnings?.inningsNumber === 2 ? MatchStatus.INNINGS_2 : MatchStatus.INNINGS_1;
+    const revertedStatusText =
+      lastInnings?.inningsNumber === 2
+        ? 'Chase in progress (last ball undone)'
+        : 'First innings live (last ball undone)';
 
     await this.prisma.match.update({
       where: { id: matchId },
       data: {
+        status: revertedStatus,
+        currentInnings: lastInnings?.inningsNumber ?? match.currentInnings,
+        winnerTeamId: null,
+        resultSummary: null,
+        statusText: revertedStatusText,
         version: { increment: 1 },
-        statusText: 'Last ball undone',
       },
     });
+
+    if (match.fixtureId) {
+      await this.prisma.fixture.update({
+        where: { id: match.fixtureId },
+        data: { status: 'IN_PROGRESS' },
+      });
+    }
 
     await this.log({
       tournamentId: match.tournamentId,
@@ -778,6 +864,9 @@ export class ScoringService {
 
   async editLastBall(matchId: string, input: BallInput, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    if (match.status === MatchStatus.ABANDONED) {
+      throw new BadRequestException('Cannot edit ball on abandoned match');
+    }
 
     const last = await this.prisma.ballEvent.findFirst({
       where: {
@@ -798,6 +887,13 @@ export class ScoringService {
       },
     });
 
+    await this.prisma.innings.update({
+      where: { id: last.inningsId },
+      data: { isCompleted: false },
+    });
+
+    await this.recomputeInnings(last.inningsId);
+
     await this.recordBall(matchId, input, updatedBy);
 
     await this.log({
@@ -815,6 +911,7 @@ export class ScoringService {
 
   async endInnings(matchId: string, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    this.assertMatchIsEditable(match);
     if (!match.currentInnings) {
       throw new BadRequestException('No innings in progress');
     }
@@ -862,6 +959,13 @@ export class ScoringService {
           version: { increment: 1 },
         },
       });
+
+      await this.prisma.fixture.update({
+        where: { id: match.fixtureId },
+        data: {
+          status: 'COMPLETED',
+        },
+      });
     }
 
     await this.log({
@@ -881,6 +985,7 @@ export class ScoringService {
 
   async setInterruption(matchId: string, type: MatchInterruptionType, statusText: string, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    this.assertMatchIsEditable(match);
     const nextStatus = type === MatchInterruptionType.ABANDONED ? MatchStatus.ABANDONED : MatchStatus.DELAYED;
 
     await this.prisma.match.update({
@@ -917,6 +1022,7 @@ export class ScoringService {
     updatedBy: string,
   ) {
     const match = await this.getMatch(matchId);
+    this.assertMatchIsEditable(match);
 
     await this.prisma.match.update({
       where: { id: matchId },
@@ -937,6 +1043,29 @@ export class ScoringService {
         status: 'COMPLETED',
       },
     });
+
+    if (data.momPlayerId) {
+      const existingAward = await this.prisma.award.findFirst({
+        where: { matchId, type: AwardType.MAN_OF_THE_MATCH },
+      });
+      if (existingAward) {
+        await this.prisma.award.update({
+          where: { id: existingAward.id },
+          data: { playerId: data.momPlayerId, locked: true },
+        });
+      } else {
+        await this.prisma.award.create({
+          data: {
+            tournamentId: match.tournamentId,
+            matchId,
+            playerId: data.momPlayerId,
+            type: AwardType.MAN_OF_THE_MATCH,
+            reason: `Man of the Match for ${match.matchNumber}`,
+            locked: true,
+          },
+        });
+      }
+    }
 
     await this.log({
       tournamentId: match.tournamentId,
@@ -966,6 +1095,9 @@ export class ScoringService {
 
   async setManOfMatch(matchId: string, playerId: string, updatedBy: string) {
     const match = await this.getMatch(matchId);
+    if (match.status === MatchStatus.ABANDONED) {
+      throw new BadRequestException('Cannot set Man of the Match for abandoned match');
+    }
 
     const updated = await this.prisma.match.update({
       where: { id: matchId },
@@ -974,6 +1106,28 @@ export class ScoringService {
         version: { increment: 1 },
       },
     });
+
+    const existingAward = await this.prisma.award.findFirst({
+      where: { matchId, type: AwardType.MAN_OF_THE_MATCH },
+    });
+
+    if (existingAward) {
+      await this.prisma.award.update({
+        where: { id: existingAward.id },
+        data: { playerId, locked: true },
+      });
+    } else {
+      await this.prisma.award.create({
+        data: {
+          tournamentId: match.tournamentId,
+          matchId,
+          playerId,
+          type: AwardType.MAN_OF_THE_MATCH,
+          reason: `Man of the Match for ${match.matchNumber}`,
+          locked: true,
+        },
+      });
+    }
 
     await this.log({
       tournamentId: match.tournamentId,

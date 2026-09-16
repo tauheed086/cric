@@ -22,13 +22,33 @@ export function AdminPlayersPage() {
     teamId: '',
   });
 
+  const [customDisplayName, setCustomDisplayName] = useState(false);
+
+  const handleFirstNameChange = (val: string) => {
+    setForm((prev) => ({
+      ...prev,
+      firstName: val,
+      displayName: !customDisplayName ? [val, prev.lastName].filter(Boolean).join(' ') : prev.displayName,
+    }));
+  };
+
+  const handleLastNameChange = (val: string) => {
+    setForm((prev) => ({
+      ...prev,
+      lastName: val,
+      displayName: !customDisplayName ? [prev.firstName, val].filter(Boolean).join(' ') : prev.displayName,
+    }));
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
     setActionError(null);
     try {
-      await apiPost('/admin/players', { ...form, teamId: form.teamId || defaultTeam });
+      const computedDisplayName = form.displayName.trim() || [form.firstName, form.lastName].filter(Boolean).join(' ').trim() || 'Player';
+      await apiPost('/admin/players', { ...form, displayName: computedDisplayName, teamId: form.teamId || defaultTeam });
       setForm((prev) => ({ ...prev, firstName: '', lastName: '', displayName: '', jerseyNumber: '' }));
+      setCustomDisplayName(false);
       await players.refetch();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Unable to create player');
@@ -57,12 +77,15 @@ export function AdminPlayersPage() {
         <SectionTitle title="Player Management" />
         {actionError ? <p style={{ color: 'var(--danger)', marginBottom: 12 }}>{actionError}</p> : null}
         <form className="form-grid compact" onSubmit={submit}>
-          <input placeholder="First name" value={form.firstName} onChange={(e) => setForm((prev) => ({ ...prev, firstName: e.target.value }))} />
-          <input placeholder="Last name" value={form.lastName} onChange={(e) => setForm((prev) => ({ ...prev, lastName: e.target.value }))} />
+          <input placeholder="First name" value={form.firstName} onChange={(e) => handleFirstNameChange(e.target.value)} />
+          <input placeholder="Last name" value={form.lastName} onChange={(e) => handleLastNameChange(e.target.value)} />
           <input
             placeholder="Display name"
             value={form.displayName}
-            onChange={(e) => setForm((prev) => ({ ...prev, displayName: e.target.value }))}
+            onChange={(e) => {
+              setCustomDisplayName(true);
+              setForm((prev) => ({ ...prev, displayName: e.target.value }));
+            }}
           />
           <select value={form.teamId || defaultTeam} onChange={(e) => setForm((prev) => ({ ...prev, teamId: e.target.value }))}>
             {teams.data?.map((team) => (
@@ -84,17 +107,20 @@ export function AdminPlayersPage() {
       </Card>
       <Card>
         <ul className="plain-list">
-          {players.data?.map((player) => (
-            <li key={player.id}>
-              <div>
-                <strong>{player.displayName}</strong>
-                <span>{player.role}</span>
-              </div>
-              <button className="button danger" onClick={() => remove(player.id)}>
-                Delete
-              </button>
-            </li>
-          ))}
+          {players.data?.map((player) => {
+            const displayName = player.displayName || [player.firstName, player.lastName].filter(Boolean).join(' ').trim() || 'Player';
+            return (
+              <li key={player.id}>
+                <div>
+                  <strong style={{ fontSize: '15px', color: 'var(--text)' }}>{displayName}</strong>
+                  <span style={{ fontSize: '12px', color: 'var(--text-soft)' }}>{player.role}</span>
+                </div>
+                <button className="button danger" onClick={() => remove(player.id)}>
+                  Delete
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </Card>
     </div>

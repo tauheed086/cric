@@ -1,14 +1,35 @@
+import { useState } from 'react';
 import clsx from 'clsx';
 import { Link } from 'react-router-dom';
 
-export function Card(props: React.PropsWithChildren<{ className?: string }>) {
-  return <section className={clsx('card', props.className)}>{props.children}</section>;
+export function Card(props: React.HTMLAttributes<HTMLElement>) {
+  const { className, children, ...rest } = props;
+  return (
+    <section className={clsx('card', className)} {...rest}>
+      {children}
+    </section>
+  );
 }
 
-export function SectionTitle({ title, action }: { title: string; action?: React.ReactNode }) {
+export function SectionTitle({
+  title,
+  subtitle,
+  action,
+}: {
+  title: string;
+  subtitle?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="section-title">
-      <h2>{title}</h2>
+      <div>
+        <h2>{title}</h2>
+        {subtitle && (
+          <p className="section-subtitle" style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+            {subtitle}
+          </p>
+        )}
+      </div>
       {action}
     </div>
   );
@@ -75,3 +96,45 @@ export function NavCardLink({ to, title, subtitle }: { to: string; title: string
     </Link>
   );
 }
+
+export function TeamBadge({
+  team,
+  name,
+  size = 'sm',
+  className,
+}: {
+  team?: { name?: string; shortName?: string; logoUrl?: string | null; jerseyPrimary?: string | null } | null;
+  name?: string;
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+}) {
+  const [imgError, setImgError] = useState(false);
+  if (!team && !name) return null;
+
+  const logoUrl = team?.logoUrl;
+  const teamName = team?.name || name || '';
+  const shortName = team?.shortName || teamName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase() || 'TM';
+  const primaryColor = team?.jerseyPrimary || 'var(--accent)';
+
+  if (logoUrl && !imgError) {
+    return (
+      <img
+        src={logoUrl}
+        alt={teamName}
+        className={clsx('team-logo-badge', size, className)}
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={clsx('team-badge-fallback', size, className)}
+      style={{ backgroundColor: primaryColor }}
+      title={teamName}
+    >
+      {shortName.slice(0, 2)}
+    </span>
+  );
+}
+

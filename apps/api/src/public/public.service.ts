@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { LeaderboardMetric } from '@prisma/client';
+import { AwardType, LeaderboardMetric } from '@prisma/client';
 import { type DashboardPayload, type MatchCard, type PointsTableRow } from '@cric/types';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectionService } from '../scoring/projection.service.js';
@@ -15,16 +15,47 @@ export class PublicService {
     private readonly projections: ProjectionService,
   ) {}
 
-  private async getTournament() {
+  async listTournaments() {
+    return this.prisma.tournament.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        season: true,
+        sponsorName: true,
+        sponsorLogoUrl: true,
+        isActive: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  private async getTournament(tournamentId?: string) {
+    if (tournamentId) {
+      const tournament = await this.prisma.tournament.findUnique({
+        where: { id: tournamentId },
+      });
+      if (tournament) {
+        return tournament;
+      }
+    }
     const tournament = await this.prisma.tournament.findFirst({
       where: { isActive: true },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
     });
-    if (!tournament) {
+    if (tournament) {
+      return tournament;
+    }
+    const fallback = await this.prisma.tournament.findFirst({
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!fallback) {
       throw new NotFoundException('Tournament not found');
     }
-    return tournament;
+    return fallback;
   }
+
 
   private toMatchCard(match: any): MatchCard {
     const innings = match.innings ?? [];
@@ -38,14 +69,20 @@ export class PublicService {
     const current = innings.find((row: any) => row.inningsNumber === match.currentInnings);
     const teamAInnings = innings.find((row: any) => row.battingTeamId === match.teamA.id);
     const teamBInnings = innings.find((row: any) => row.battingTeamId === match.teamB.id);
+    const oversLimit = match.tournament?.seasonSettings?.oversPerInnings ?? 20;
+    const maxBalls = oversLimit * 6;
+    const ballsRemaining = current ? Math.max(maxBalls - current.balls, 0) : 0;
+    const runsNeeded = match.targetRuns && current ? Math.max(match.targetRuns - current.totalRuns, 0) : 0;
+    const requiredRate =
+      match.targetRuns && ballsRemaining > 0
+        ? Number((runsNeeded / (ballsRemaining / 6)).toFixed(2))
+        : null;
+
     const score = current
       ? {
           ...inningScore(current),
           target: match.targetRuns,
-          requiredRate:
-            match.targetRuns && current.balls > 0
-              ? Number((((match.targetRuns - current.totalRuns) / Math.max((120 - current.balls) / 6, 1)).toFixed(2)))
-              : null,
+          requiredRate,
         }
       : undefined;
 
@@ -61,12 +98,14 @@ export class PublicService {
         name: match.teamA.name,
         shortName: match.teamA.shortName,
         logoUrl: match.teamA.logoUrl,
+        jerseyPrimary: match.teamA.jerseyPrimary,
       },
       teamB: {
         id: match.teamB.id,
         name: match.teamB.name,
         shortName: match.teamB.shortName,
         logoUrl: match.teamB.logoUrl,
+        jerseyPrimary: match.teamB.jerseyPrimary,
       },
       score,
       teamAScore: teamAInnings ? inningScore(teamAInnings) : null,
@@ -79,8 +118,8 @@ export class PublicService {
     };
   }
 
-  async homeDashboard(): Promise<DashboardPayload> {
-    const tournament = await this.getTournament();
+  async homeDashboard(tournamentId?: string): Promise<DashboardPayload> {
+    const tournament = await this.getTournament(tournamentId);
     const [matches, pointsRows, topBatters, topBowlers, announcement] = await Promise.all([
       this.prisma.match.findMany({
         where: { tournamentId: tournament.id },
@@ -90,6 +129,11 @@ export class PublicService {
           venue: true,
           toss: true,
           innings: true,
+          tournament: {
+            include: {
+              seasonSettings: true,
+            },
+          },
         },
         orderBy: { startsAt: 'asc' },
       }),
@@ -99,8 +143,8 @@ export class PublicService {
         orderBy: [{ points: 'desc' }, { netRunRate: 'desc' }],
         take: 6,
       }),
-      this.projections.listLeaderboard(LeaderboardMetric.MOST_RUNS),
-      this.projections.listLeaderboard(LeaderboardMetric.MOST_WICKETS),
+      this.projections.listLeaderboard(LeaderboardMetric.MOST_RUNS, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.MOST_WICKETS, tournament.id),
       this.prisma.announcement.findFirst({
         where: { tournamentId: tournament.id, isPublished: true },
         orderBy: { publishedAt: 'desc' },
@@ -114,25 +158,49 @@ export class PublicService {
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
       .slice(0, 4);
 
+    const leagueMatches = matches
+      .filter((m) => m.stage === 'LEAGUE' && ['COMPLETED', 'ABANDONED'].includes(m.status))
+      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+
+    const formMap = new Map<string, string[]>();
+    for (const match of leagueMatches) {
+      const listA = formMap.get(match.teamAId) ?? [];
+      listA.push(match.winnerTeamId === match.teamAId ? 'W' : match.winnerTeamId === match.teamBId ? 'L' : 'NR');
+      formMap.set(match.teamAId, listA);
+
+      const listB = formMap.get(match.teamBId) ?? [];
+      listB.push(match.winnerTeamId === match.teamBId ? 'W' : match.winnerTeamId === match.teamAId ? 'L' : 'NR');
+      formMap.set(match.teamBId, listB);
+    }
+
     return {
+      tournamentId: tournament.id,
       tournamentName: tournament.name,
       season: tournament.season,
       ongoingMatches: ongoing.map((row) => this.toMatchCard(row)),
       upcomingFixtures: upcoming.map((row) => this.toMatchCard(row)),
       recentResults: recentResults.map((row) => this.toMatchCard(row)),
-      pointsPreview: pointsRows.map((row) => ({
-        teamId: row.teamId,
-        teamName: row.team.name,
-        played: row.played,
-        won: row.won,
-        lost: row.lost,
-        tied: row.tied,
-        noResult: row.noResult,
-        points: row.points,
-        netRunRate: row.netRunRate,
-        qualified: row.qualified,
-        eliminated: row.eliminated,
-      })),
+      pointsPreview: pointsRows.map((row) => {
+        const form = (formMap.get(row.teamId) ?? []).slice(-4);
+        return {
+          teamId: row.teamId,
+          teamName: row.team.name,
+          teamShortName: row.team.shortName,
+          logoUrl: row.team.logoUrl,
+          jerseyPrimary: row.team.jerseyPrimary,
+          played: row.played,
+          won: row.won,
+          lost: row.lost,
+          tied: row.tied,
+          noResult: row.noResult,
+          points: row.points,
+          netRunRate: row.netRunRate,
+          qualified: row.qualified,
+          eliminated: row.eliminated,
+          form,
+          recentForm: form,
+        };
+      }),
       topBatters: topBatters.slice(0, 5),
       topBowlers: topBowlers.slice(0, 5),
       announcement: announcement
@@ -146,8 +214,8 @@ export class PublicService {
     };
   }
 
-  async fixtures(status?: string, date?: string) {
-    const tournament = await this.getTournament();
+  async fixtures(status?: string, date?: string, tournamentId?: string) {
+    const tournament = await this.getTournament(tournamentId);
     const filters: any = { tournamentId: tournament.id };
 
     if (status) {
@@ -176,6 +244,11 @@ export class PublicService {
         venue: true,
         toss: true,
         innings: true,
+        tournament: {
+          include: {
+            seasonSettings: true,
+          },
+        },
       },
       orderBy: { startsAt: 'asc' },
     });
@@ -192,13 +265,26 @@ export class PublicService {
         venue: true,
         innings: true,
         toss: true,
+        tournament: {
+          include: {
+            seasonSettings: true,
+          },
+        },
       },
     });
 
     if (!match) {
       throw new NotFoundException('Match not found');
     }
-    return this.toMatchCard(match);
+    const card = this.toMatchCard(match);
+    const momAward = await this.prisma.award.findFirst({
+      where: { matchId, type: AwardType.MAN_OF_THE_MATCH },
+      include: { player: true },
+    });
+    return {
+      ...card,
+      momPlayer: momAward?.player ?? null,
+    };
   }
 
   async matchScorecard(matchId: string) {
@@ -223,7 +309,7 @@ export class PublicService {
         bowler: true,
       },
       orderBy: { sequence: 'desc' },
-      take: 100,
+      take: 1000,
     });
   }
 
@@ -277,8 +363,8 @@ export class PublicService {
     };
   }
 
-  async results() {
-    const tournament = await this.getTournament();
+  async results(tournamentId?: string) {
+    const tournament = await this.getTournament(tournamentId);
     const matches = await this.prisma.match.findMany({
       where: {
         tournamentId: tournament.id,
@@ -290,14 +376,19 @@ export class PublicService {
         venue: true,
         innings: true,
         toss: true,
+        tournament: {
+          include: {
+            seasonSettings: true,
+          },
+        },
       },
       orderBy: { publishedAt: 'desc' },
     });
     return matches.map((row) => this.toMatchCard(row));
   }
 
-  async pointsTable(): Promise<PointsTableRow[]> {
-    const tournament = await this.getTournament();
+  async pointsTable(tournamentId?: string): Promise<PointsTableRow[]> {
+    const tournament = await this.getTournament(tournamentId);
     const existing = await this.prisma.pointsTableProjection.findMany({
       where: { tournamentId: tournament.id },
       include: { team: true },
@@ -305,22 +396,51 @@ export class PublicService {
     });
     if (!existing.length) {
       await this.projections.rebuildPointsTable(tournament.id);
-      return this.pointsTable();
+      return this.pointsTable(tournamentId);
     }
 
-    return existing.map((row) => ({
-      teamId: row.teamId,
-      teamName: row.team.name,
-      played: row.played,
-      won: row.won,
-      lost: row.lost,
-      tied: row.tied,
-      noResult: row.noResult,
-      points: row.points,
-      netRunRate: row.netRunRate,
-      qualified: row.qualified,
-      eliminated: row.eliminated,
-    }));
+    const leagueMatches = await this.prisma.match.findMany({
+      where: {
+        tournamentId: tournament.id,
+        stage: 'LEAGUE',
+        status: { in: ['COMPLETED', 'ABANDONED'] as any },
+      },
+      orderBy: { startsAt: 'asc' },
+      select: { teamAId: true, teamBId: true, winnerTeamId: true, status: true },
+    });
+
+    const formMap = new Map<string, string[]>();
+    for (const match of leagueMatches) {
+      const listA = formMap.get(match.teamAId) ?? [];
+      listA.push(match.winnerTeamId === match.teamAId ? 'W' : match.winnerTeamId === match.teamBId ? 'L' : 'NR');
+      formMap.set(match.teamAId, listA);
+
+      const listB = formMap.get(match.teamBId) ?? [];
+      listB.push(match.winnerTeamId === match.teamBId ? 'W' : match.winnerTeamId === match.teamAId ? 'L' : 'NR');
+      formMap.set(match.teamBId, listB);
+    }
+
+    return existing.map((row) => {
+      const form = (formMap.get(row.teamId) ?? []).slice(-4);
+      return {
+        teamId: row.teamId,
+        teamName: row.team.name,
+        teamShortName: row.team.shortName,
+        logoUrl: row.team.logoUrl,
+        jerseyPrimary: row.team.jerseyPrimary,
+        played: row.played,
+        won: row.won,
+        lost: row.lost,
+        tied: row.tied,
+        noResult: row.noResult,
+        points: row.points,
+        netRunRate: row.netRunRate,
+        qualified: row.qualified,
+        eliminated: row.eliminated,
+        form,
+        recentForm: form,
+      };
+    });
   }
 
   async teamPage(teamId: string) {
@@ -380,10 +500,26 @@ export class PublicService {
     ]);
 
     const runs = battingEvents.reduce((sum, row) => sum + row.runsOffBat, 0);
-    const ballsFaced = battingEvents.filter((row) => row.isValidDelivery).length;
-    const wickets = bowlingEvents.filter((row) => row.wicket).length;
+    const ballsFaced = battingEvents.filter((row) => row.extrasType !== 'WIDE').length;
+    const nonBowlerWickets = new Set([
+      'RUN_OUT',
+      'RETIRED_OUT',
+      'RETIRED_HURT',
+      'TIMED_OUT',
+      'OBSTRUCTING_THE_FIELD',
+      'HIT_THE_BALL_TWICE',
+    ]);
+    const wickets = bowlingEvents.filter(
+      (row) => row.wicket && (!row.wicketType || !nonBowlerWickets.has(row.wicketType)),
+    ).length;
     const ballsBowled = bowlingEvents.filter((row) => row.isValidDelivery).length;
-    const conceded = bowlingEvents.reduce((sum, row) => sum + row.runsOffBat + row.extrasRuns, 0);
+    const conceded = bowlingEvents.reduce(
+      (sum, row) =>
+        sum +
+        row.runsOffBat +
+        (row.extrasType === 'BYE' || row.extrasType === 'LEG_BYE' ? 0 : row.extrasRuns),
+      0,
+    );
     const fours = battingEvents.filter((row) => row.runsOffBat === 4).length;
     const sixes = battingEvents.filter((row) => row.runsOffBat === 6).length;
 
@@ -404,15 +540,16 @@ export class PublicService {
     };
   }
 
-  async leaderboards() {
+  async leaderboards(tournamentId?: string) {
+    const tournament = await this.getTournament(tournamentId);
     const [runs, wickets, strikeRate, economy, sixes, fours, mvp] = await Promise.all([
-      this.projections.listLeaderboard(LeaderboardMetric.MOST_RUNS),
-      this.projections.listLeaderboard(LeaderboardMetric.MOST_WICKETS),
-      this.projections.listLeaderboard(LeaderboardMetric.BEST_STRIKE_RATE),
-      this.projections.listLeaderboard(LeaderboardMetric.BEST_ECONOMY),
-      this.projections.listLeaderboard(LeaderboardMetric.MOST_SIXES),
-      this.projections.listLeaderboard(LeaderboardMetric.MOST_FOURS),
-      this.projections.listLeaderboard(LeaderboardMetric.MVP),
+      this.projections.listLeaderboard(LeaderboardMetric.MOST_RUNS, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.MOST_WICKETS, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.BEST_STRIKE_RATE, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.BEST_ECONOMY, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.MOST_SIXES, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.MOST_FOURS, tournament.id),
+      this.projections.listLeaderboard(LeaderboardMetric.MVP, tournament.id),
     ]);
     return {
       mostRuns: runs,
@@ -425,8 +562,8 @@ export class PublicService {
     };
   }
 
-  async awards() {
-    const tournament = await this.getTournament();
+  async awards(tournamentId?: string) {
+    const tournament = await this.getTournament(tournamentId);
     return this.prisma.award.findMany({
       where: { tournamentId: tournament.id },
       include: {
@@ -436,8 +573,8 @@ export class PublicService {
     });
   }
 
-  async announcements() {
-    const tournament = await this.getTournament();
+  async announcements(tournamentId?: string) {
+    const tournament = await this.getTournament(tournamentId);
     return this.prisma.announcement.findMany({
       where: {
         tournamentId: tournament.id,
@@ -447,8 +584,8 @@ export class PublicService {
     });
   }
 
-  async search(query: string) {
-    const tournament = await this.getTournament();
+  async search(query: string, tournamentId?: string) {
+    const tournament = await this.getTournament(tournamentId);
     const q = query.trim();
     if (!q) {
       return {
@@ -474,6 +611,11 @@ export class PublicService {
           venue: true,
           innings: true,
           toss: true,
+          tournament: {
+            include: {
+              seasonSettings: true,
+            },
+          },
         },
         take: 20,
       }),

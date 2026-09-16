@@ -8,8 +8,12 @@ import { FixtureCard } from '../../components/FixtureCard';
 import { PointsTableView } from '../../components/PointsTableView';
 import { LeaderboardBlock } from '../../components/LeaderboardBlock';
 
+import { useTournament } from '../../context/TournamentContext';
+
 export function PublicHomePage() {
-  const { data, loading, error, refetch } = useApi<DashboardPayload>('/public/home');
+  const { selectedTournamentId } = useTournament();
+  const path = selectedTournamentId ? `/public/home?tournamentId=${encodeURIComponent(selectedTournamentId)}` : '/public/home';
+  const { data, loading, error, refetch } = useApi<DashboardPayload>(path);
   const refreshDashboard = useCallback(() => {
     void refetch();
   }, [refetch]);
@@ -27,9 +31,9 @@ export function PublicHomePage() {
     <div className="page-grid">
       <Card className="hero-card">
         <div>
-          <span className="hero-kicker">Season {data.season}</span>
+          <span className="hero-kicker">TurfHero • Season {data.season}</span>
           <h1>{data.tournamentName}</h1>
-          <p>Admin-controlled scoring with instant public match updates.</p>
+          <p>Real-time tournament tracking with instant ball-by-ball updates.</p>
         </div>
         <div className="hero-actions">
           <Link to="/public/fixtures" className="button primary">

@@ -1,9 +1,12 @@
 import { useApi } from '../../hooks/useApi';
+import { useTournament } from '../../context/TournamentContext';
 import { Card, LoadingSkeleton, SectionTitle } from '../../components/ui';
 import { LeaderboardBlock } from '../../components/LeaderboardBlock';
 
 export function PublicStatsPage() {
-  const { data, loading, error } = useApi<any>('/public/leaderboards');
+  const { selectedTournamentId } = useTournament();
+  const path = selectedTournamentId ? `/public/leaderboards?tournamentId=${encodeURIComponent(selectedTournamentId)}` : '/public/leaderboards';
+  const { data, loading, error } = useApi<any>(path);
 
   return (
     <div className="page-grid">

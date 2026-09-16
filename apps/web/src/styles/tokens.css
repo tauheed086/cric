@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
 
-:root {
+:root,
+:root[data-theme="dark"] {
   --bg-0: #0a1018;
   --bg-1: #111a26;
   --bg-2: #1a2635;
@@ -14,16 +15,44 @@
   --ok: #35d07f;
   --shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
   --radius: 14px;
+  --card-bg: linear-gradient(165deg, color-mix(in srgb, var(--bg-1) 93%, #0e1e30), var(--bg-1));
+  --hero-bg: linear-gradient(145deg, color-mix(in srgb, var(--bg-2) 90%, #1e293b), color-mix(in srgb, var(--bg-2) 80%, #0f172a));
+  --inning-card-bg: color-mix(in srgb, var(--bg-2) 86%, #1e293b);
+  --inning-header-bg: color-mix(in srgb, var(--bg-2) 75%, #334155);
+  --fow-bg: color-mix(in srgb, var(--bg-2) 90%, #1a2536);
+  --fow-chip-bg: rgba(255, 255, 255, 0.05);
+  --table-hover: rgba(255, 255, 255, 0.02);
+  --scoreboard-row-bg: rgba(255, 255, 255, 0.03);
+  --mom-banner-bg: rgba(234, 179, 8, 0.12);
+  --mom-banner-border: rgba(234, 179, 8, 0.3);
+  --mom-banner-text: #facc15;
+  --radial-glow: rgba(20, 195, 142, 0.12);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg-0: #f5f8fc;
-    --bg-1: #ffffff;
-    --bg-2: #edf3fb;
-    --text: #0f1f33;
-    --text-soft: #4f617a;
-    --line: #d9e3f0;
-    --shadow: 0 8px 22px rgba(19, 44, 77, 0.08);
-  }
+:root[data-theme="light"] {
+  --bg-0: #f1f5f9;
+  --bg-1: #ffffff;
+  --bg-2: #f8fafc;
+  --text: #0f172a;
+  --text-soft: #475569;
+  --line: #cbd5e1;
+  --accent: #059669;
+  --accent-alt: #0284c7;
+  --danger: #dc2626;
+  --warn: #d97706;
+  --ok: #16a34a;
+  --shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+  --radius: 14px;
+  --card-bg: #ffffff;
+  --hero-bg: linear-gradient(145deg, #ffffff, #f8fafc);
+  --inning-card-bg: #ffffff;
+  --inning-header-bg: #f1f5f9;
+  --fow-bg: #f8fafc;
+  --fow-chip-bg: #e2e8f0;
+  --table-hover: rgba(0, 0, 0, 0.02);
+  --scoreboard-row-bg: #f8fafc;
+  --mom-banner-bg: rgba(234, 179, 8, 0.15);
+  --mom-banner-border: rgba(234, 179, 8, 0.4);
+  --mom-banner-text: #854d0e;
+  --radial-glow: rgba(5, 150, 105, 0.08);
 }

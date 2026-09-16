@@ -41,6 +41,7 @@ export interface TeamSummary {
   name: string;
   shortName: string;
   logoUrl?: string | null;
+  jerseyPrimary?: string | null;
 }
 
 export interface LiveScoreSummary {
@@ -74,6 +75,9 @@ export interface MatchCard {
 export interface PointsTableRow {
   teamId: string;
   teamName: string;
+  teamShortName?: string;
+  logoUrl?: string | null;
+  jerseyPrimary?: string | null;
   played: number;
   won: number;
   lost: number;
@@ -83,6 +87,8 @@ export interface PointsTableRow {
   netRunRate: number;
   qualified: boolean;
   eliminated: boolean;
+  form?: string[];
+  recentForm?: string[];
 }
 
 export interface LeaderboardRow {
@@ -100,6 +106,7 @@ export interface BallInput {
   extrasRuns?: number;
   wicket?: boolean;
   wicketType?: string | null;
+  dismissedPlayerId?: string | null;
   strikerId: string;
   nonStrikerId: string;
   bowlerId: string;
@@ -107,6 +114,7 @@ export interface BallInput {
 }
 
 export interface DashboardPayload {
+  tournamentId: string;
   tournamentName: string;
   season: string;
   ongoingMatches: MatchCard[];
@@ -122,3 +130,29 @@ export interface DashboardPayload {
     publishedAt: string;
   } | null;
 }
+
+export interface TournamentSummary {
+  id: string;
+  name: string;
+  season: string;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export enum AdminRole {
+  SUPER_ADMIN = 'SUPER_ADMIN',
+  SCORER = 'SCORER',
+}
+
+export interface AdminUserSummary {
+  id: string;
+  username: string;
+  name: string;
+  role: AdminRole;
+  isActive: boolean;
+  tournamentsCount?: number;
+  createdAt: string;
+}
+

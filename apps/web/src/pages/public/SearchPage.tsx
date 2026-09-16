@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiGet } from '../../api/client';
+import { useTournament } from '../../context/TournamentContext';
 import { Card, SectionTitle } from '../../components/ui';
 
 export function PublicSearchPage() {
+  const { selectedTournamentId } = useTournament();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -12,7 +14,8 @@ export function PublicSearchPage() {
     event.preventDefault();
     setLoading(true);
     try {
-      const data = await apiGet<any>(`/public/search?q=${encodeURIComponent(query)}`);
+      const tParam = selectedTournamentId ? `&tournamentId=${encodeURIComponent(selectedTournamentId)}` : '';
+      const data = await apiGet<any>(`/public/search?q=${encodeURIComponent(query)}${tParam}`);
       setResults(data);
     } finally {
       setLoading(false);

@@ -1,8 +1,12 @@
+import { Link } from 'react-router-dom';
 import { useApi } from '../../hooks/useApi';
+import { useTournament } from '../../context/TournamentContext';
 import { Card, LoadingSkeleton, SectionTitle } from '../../components/ui';
 
 export function PublicAwardsPage() {
-  const { data, loading, error } = useApi<any[]>('/public/awards');
+  const { selectedTournamentId } = useTournament();
+  const path = selectedTournamentId ? `/public/awards?tournamentId=${encodeURIComponent(selectedTournamentId)}` : '/public/awards';
+  const { data, loading, error } = useApi<any[]>(path);
 
   return (
     <div className="page-grid">
@@ -16,7 +20,11 @@ export function PublicAwardsPage() {
         {data?.map((award) => (
           <Card key={award.id}>
             <h3>{award.type.replaceAll('_', ' ')}</h3>
-            <p>{award.player.displayName}</p>
+            <p>
+              <Link to={`/public/players/${award.player.id}`} className="player-link">
+                <strong>{award.player.displayName}</strong>
+              </Link>
+            </p>
             <small>{award.locked ? 'Locked' : 'Editable'} • {award.reason ?? 'Manual selection'}</small>
           </Card>
         ))}

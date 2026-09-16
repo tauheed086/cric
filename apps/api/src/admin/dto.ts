@@ -237,6 +237,10 @@ export class BallInputDto {
   @IsString()
   wicketType?: string;
 
+  @IsOptional()
+  @IsString()
+  dismissedPlayerId?: string;
+
   @IsString()
   strikerId!: string;
 
@@ -314,4 +318,24 @@ export class AnnouncementDto {
   @IsOptional()
   @IsBoolean()
   isPublished?: boolean;
+}
+
+export class AdminLoginDto {
+  // Legacy master-token login
+  @IsOptional()
+  @IsString()
+  token?: string;
+
+  @IsOptional()
+  @IsString()
+  adminName?: string;
+
+  // Username/password login (registered admin users)
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
 }

@@ -1,6 +1,6 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { MatchCard } from '@cric/types';
-import { Card, StatusBadge } from './ui';
+import { Card, StatusBadge, TeamBadge } from './ui';
 
 function scoreLabel(score: MatchCard['teamAScore']) {
   if (!score) {
@@ -10,14 +10,15 @@ function scoreLabel(score: MatchCard['teamAScore']) {
 }
 
 export function FixtureCard({ match }: { match: MatchCard }) {
+  const navigate = useNavigate();
   let resolvedTeamAScore = match.teamAScore ?? null;
   let resolvedTeamBScore = match.teamBScore ?? null;
 
-  if (!resolvedTeamAScore && !resolvedTeamBScore && match.score && match.currentBattingTeamId) {
-    if (match.currentBattingTeamId === match.teamA.id) {
-      resolvedTeamAScore = match.score;
-    } else if (match.currentBattingTeamId === match.teamB.id) {
+  if (!resolvedTeamAScore && !resolvedTeamBScore && match.score) {
+    if (match.currentBattingTeamId === match.teamB.id) {
       resolvedTeamBScore = match.score;
+    } else {
+      resolvedTeamAScore = match.score;
     }
   }
 
@@ -32,8 +33,23 @@ export function FixtureCard({ match }: { match: MatchCard }) {
         ? match.teamB.shortName
         : null;
 
+  const handleCardClick = () => {
+    navigate(`/public/matches/${match.id}`);
+  };
+
   return (
-    <Card className="fixture-card">
+    <Card
+      className="fixture-card is-clickable"
+      onClick={handleCardClick}
+      role="link"
+      tabIndex={0}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleCardClick();
+        }
+      }}
+    >
       <div className="fixture-head">
         <div>
           <h3>{match.matchNumber}</h3>
@@ -45,7 +61,10 @@ export function FixtureCard({ match }: { match: MatchCard }) {
       </div>
       <div className="fixture-teams">
         <div className="fixture-team">
-          <strong>{match.teamA.shortName}</strong>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <TeamBadge team={match.teamA} size="md" />
+            <strong>{match.teamA.shortName}</strong>
+          </div>
           <span className={`fixture-team-score ${isTeamAScoreEmpty ? 'is-empty' : ''}`.trim()}>{teamAScore}</span>
         </div>
         <div className="fixture-center">
@@ -53,13 +72,22 @@ export function FixtureCard({ match }: { match: MatchCard }) {
           <span className="fixture-versus">vs</span>
         </div>
         <div className="fixture-team is-away">
-          <strong>{match.teamB.shortName}</strong>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row-reverse' }}>
+            <TeamBadge team={match.teamB} size="md" />
+            <strong>{match.teamB.shortName}</strong>
+          </div>
           <span className={`fixture-team-score ${isTeamBScoreEmpty ? 'is-empty' : ''}`.trim()}>{teamBScore}</span>
         </div>
       </div>
       <div className="fixture-foot">
         <small>{match.statusText ?? 'Awaiting update'}</small>
-        <Link to={`/public/matches/${match.id}`}>Open Match</Link>
+        <Link
+          to={`/public/matches/${match.id}`}
+          className="fixture-link-cta"
+          onClick={(e) => e.stopPropagation()}
+        >
+          View Full Scorecard & Stats →
+        </Link>
       </div>
     </Card>
   );

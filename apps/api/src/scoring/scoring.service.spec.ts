@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { ScoringService } from './scoring.service';
+import { ScoringService } from './scoring.service.js';
 
 describe('ScoringService', () => {
   const buildService = () => {
@@ -49,9 +49,9 @@ describe('ScoringService', () => {
     } as any;
 
     const projections = {
-      rebuildMatchProjection: jest.fn(),
-      rebuildPointsTable: jest.fn(),
-      rebuildLeaderboards: jest.fn(),
+      rebuildMatchProjection: jest.fn().mockResolvedValue({}),
+      rebuildPointsTable: jest.fn().mockResolvedValue([]),
+      rebuildLeaderboards: jest.fn().mockResolvedValue([]),
     } as any;
 
     const eventBus = {
@@ -73,6 +73,135 @@ describe('ScoringService', () => {
     prisma.ballEvent.findFirst.mockResolvedValue(null);
 
     await expect(service.undoLastBall('m1', 'admin')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('blocks undo when match is abandoned', async () => {
+    const { service, prisma } = buildService();
+    prisma.match.findUnique.mockResolvedValue({
+      id: 'm1',
+      tournamentId: 't1',
+      status: 'ABANDONED',
+      innings: [],
+    });
+
+    await expect(service.undoLastBall('m1', 'admin')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('allows undo when match was auto-completed and reopens match', async () => {
+    const { service, prisma } = buildService();
+    prisma.match.findUnique.mockResolvedValue({
+      id: 'm1',
+      tournamentId: 't1',
+      status: 'COMPLETED',
+      currentInnings: 2,
+      innings: [{ id: 'i2', inningsNumber: 2, isCompleted: true, totalRuns: 100, wickets: 3, balls: 50, runRate: 12 }],
+    });
+    prisma.ballEvent.findFirst.mockResolvedValue({
+      id: 'b1',
+      inningsId: 'i2',
+      matchId: 'm1',
+      sequence: 50,
+      isValidDelivery: true,
+      runsOffBat: 4,
+      extrasRuns: 0,
+      wicket: false,
+    });
+    prisma.ballEvent.findMany.mockResolvedValue([]);
+    prisma.innings.findUnique.mockResolvedValue({
+      id: 'i2',
+      inningsNumber: 2,
+      isCompleted: true,
+      totalRuns: 96,
+      wickets: 3,
+      balls: 49,
+      runRate: 11.75,
+    });
+    prisma.innings.update.mockResolvedValue({
+      id: 'i2',
+      inningsNumber: 2,
+      isCompleted: false,
+      totalRuns: 96,
+      wickets: 3,
+      balls: 49,
+      runRate: 11.75,
+    });
+    prisma.over.findMany.mockResolvedValue([]);
+    prisma.match.update.mockResolvedValue({
+      id: 'm1',
+      status: 'INNINGS_2',
+      currentInnings: 2,
+    });
+    prisma.auditLog.create.mockResolvedValue({});
+
+    await service.undoLastBall('m1', 'admin');
+    expect(prisma.match.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'm1' },
+        data: expect.objectContaining({
+          status: 'INNINGS_2',
+          winnerTeamId: null,
+          resultSummary: null,
+        }),
+      }),
+    );
+  });
+
+  it('blocks already-out batsman from facing balls even when wicket is false', async () => {
+    const { service, prisma } = buildService();
+    prisma.match.findUnique.mockResolvedValue({
+      id: 'm1',
+      tournamentId: 't1',
+      status: 'INNINGS_1',
+      currentInnings: 1,
+      teamAId: 'team1',
+      teamBId: 'team2',
+      innings: [{ id: 'i1', inningsNumber: 1, isCompleted: false }],
+    });
+    prisma.innings.findUnique.mockResolvedValue({
+      id: 'i1',
+      inningsNumber: 1,
+      battingTeamId: 'team1',
+      bowlingTeamId: 'team2',
+      isCompleted: false,
+    });
+    prisma.ballEvent.findMany.mockResolvedValue([
+      { id: 'b0', strikerId: 'p1', wicket: true, isVoided: false, sequence: 1 },
+    ]);
+    prisma.squadSelection.findMany.mockResolvedValue([
+      { playerId: 'p1' },
+      { playerId: 'p2' },
+      { playerId: 'p3' },
+    ]);
+    prisma.seasonSettings.findUnique.mockResolvedValue({ oversPerInnings: 20 });
+
+    await expect(
+      service.recordBall(
+        'm1',
+        {
+          inningsNumber: 1,
+          runsOffBat: 1,
+          strikerId: 'p1',
+          nonStrikerId: 'p2',
+          bowlerId: 'p3',
+          wicket: false,
+        },
+        'admin',
+      ),
+    ).rejects.toThrow('Selected striker is already out');
+  });
+
+  it('blocks starting innings when match is abandoned', async () => {
+    const { service, prisma } = buildService();
+    prisma.match.findUnique.mockResolvedValue({
+      id: 'm1',
+      tournamentId: 't1',
+      status: 'ABANDONED',
+      teamAId: 'a',
+      teamBId: 'b',
+      innings: [],
+    });
+
+    await expect(service.startInnings('m1', 1, 'admin')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('throws when innings 2 starts before innings 1', async () => {
@@ -543,5 +672,68 @@ describe('ScoringService', () => {
       }),
     );
     expect(publishSpy).toHaveBeenCalledWith('m1', 'admin');
+  });
+
+  it('records run out for non-striker and saves correct dismissedPlayerId', async () => {
+    const { service, prisma } = buildService();
+    jest.spyOn(service as any, 'resolveInnings').mockResolvedValue({
+      match: {
+        id: 'm1',
+        tournamentId: 't1',
+        status: 'INNINGS_1',
+        targetRuns: null,
+      },
+      innings: {
+        id: 'i1',
+        battingTeamId: 'a',
+        bowlingTeamId: 'b',
+        isCompleted: false,
+        totalRuns: 10,
+      },
+    });
+    jest
+      .spyOn(service as any, 'getEligibleTeamPlayerIds')
+      .mockResolvedValueOnce(new Set(['p1', 'p2']))
+      .mockResolvedValueOnce(new Set(['p3']));
+    jest.spyOn(service as any, 'getBattingLineupSize').mockResolvedValue(11);
+    jest.spyOn(service as any, 'getOversLimit').mockResolvedValue(120);
+    jest.spyOn(service as any, 'recomputeInnings').mockResolvedValue({
+      id: 'i1',
+      battingTeamId: 'a',
+      totalRuns: 11,
+      wickets: 1,
+      balls: 1,
+    });
+    jest.spyOn(service as any, 'publish').mockResolvedValue({});
+
+    prisma.ballEvent.findMany.mockResolvedValue([]);
+    prisma.over.findUnique.mockResolvedValue(null);
+    prisma.over.create.mockResolvedValue({ id: 'o1' });
+    prisma.ballEvent.create.mockResolvedValue({ id: 'b1' });
+    prisma.match.update.mockResolvedValue({});
+    prisma.auditLog.create.mockResolvedValue({});
+
+    await service.recordBall(
+      'm1',
+      {
+        inningsNumber: 1,
+        runsOffBat: 1,
+        wicket: true,
+        wicketType: 'RUN_OUT',
+        dismissedPlayerId: 'p2',
+        strikerId: 'p1',
+        nonStrikerId: 'p2',
+        bowlerId: 'p3',
+      },
+      'admin',
+    );
+
+    expect(prisma.wicketEvent.create).toHaveBeenCalledWith({
+      data: {
+        ballEventId: 'b1',
+        dismissalType: 'RUN_OUT',
+        dismissedPlayerId: 'p2',
+      },
+    });
   });
 });

@@ -3,6 +3,15 @@ import { LeaderboardMetric, Prisma } from '@prisma/client';
 import { MatchStatus, type LeaderboardRow, type PointsTableRow } from '@cric/types';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+const NON_BOWLER_WICKETS = new Set([
+  'RUN_OUT',
+  'RETIRED_OUT',
+  'RETIRED_HURT',
+  'TIMED_OUT',
+  'OBSTRUCTING_THE_FIELD',
+  'HIT_THE_BALL_TWICE',
+]);
+
 function oversFromBalls(balls: number): number {
   if (balls === 0) {
     return 0;
@@ -28,7 +37,9 @@ export class ProjectionService {
               where: { isVoided: false },
               include: {
                 striker: true,
+                nonStriker: true,
                 bowler: true,
+                wicketEvent: true,
               },
               orderBy: { sequence: 'asc' },
             },
@@ -45,13 +56,14 @@ export class ProjectionService {
     }
 
     const inningsPayload = match.innings.map((innings) => {
-      const batting = new Map<string, { name: string; runs: number; balls: number; fours: number; sixes: number }>();
-      const bowling = new Map<string, { name: string; balls: number; runs: number; wickets: number }>();
+      const batting = new Map<string, { playerId: string; name: string; runs: number; balls: number; fours: number; sixes: number }>();
+      const bowling = new Map<string, { playerId: string; name: string; balls: number; runs: number; wickets: number }>();
       const fallOfWickets: Array<{ score: string; over: string; player: string }> = [];
       let extras = 0;
 
       for (const ball of innings.ballEvents) {
         const batter = batting.get(ball.strikerId) ?? {
+          playerId: ball.strikerId,
           name: ball.striker.displayName,
           runs: 0,
           balls: 0,
@@ -59,7 +71,7 @@ export class ProjectionService {
           sixes: 0,
         };
         batter.runs += ball.runsOffBat;
-        if (ball.isValidDelivery) {
+        if (ball.extrasType !== 'WIDE') {
           batter.balls += 1;
         }
         if (ball.runsOffBat === 4) {
@@ -71,6 +83,7 @@ export class ProjectionService {
         batting.set(ball.strikerId, batter);
 
         const bowler = bowling.get(ball.bowlerId) ?? {
+          playerId: ball.bowlerId,
           name: ball.bowler.displayName,
           balls: 0,
           runs: 0,
@@ -79,9 +92,13 @@ export class ProjectionService {
         if (ball.isValidDelivery) {
           bowler.balls += 1;
         }
-        bowler.runs += ball.runsOffBat + ball.extrasRuns;
-        if (ball.wicket) {
+        const bowlerExtras =
+          ball.extrasType === 'BYE' || ball.extrasType === 'LEG_BYE' ? 0 : ball.extrasRuns;
+        bowler.runs += ball.runsOffBat + bowlerExtras;
+        if (ball.wicket && (!ball.wicketType || !NON_BOWLER_WICKETS.has(ball.wicketType))) {
           bowler.wickets += 1;
+        }
+        if (ball.wicket) {
           const totalAtWicket = innings.ballEvents
             .filter((item) => item.sequence <= ball.sequence)
             .reduce((sum, item) => sum + item.runsOffBat + item.extrasRuns, 0);
@@ -89,10 +106,14 @@ export class ProjectionService {
           const legalBallsAtPoint = innings.ballEvents
             .filter((item) => item.sequence <= ball.sequence && item.isValidDelivery)
             .length;
+          const dismissedName =
+            ball.wicketEvent?.dismissedPlayerId === ball.nonStrikerId
+              ? ball.nonStriker.displayName
+              : ball.striker.displayName;
           fallOfWickets.push({
             score: `${totalAtWicket}/${wicketsAtPoint}`,
             over: formatOvers(legalBallsAtPoint),
-            player: ball.striker.displayName,
+            player: dismissedName,
           });
         }
         bowling.set(ball.bowlerId, bowler);
@@ -155,6 +176,7 @@ export class ProjectionService {
       this.prisma.match.findMany({
         where: {
           tournamentId,
+          stage: 'LEAGUE',
           status: { in: [MatchStatus.COMPLETED, MatchStatus.ABANDONED] as any },
         },
         include: {
@@ -173,6 +195,9 @@ export class ProjectionService {
       rows.set(team.id, {
         teamId: team.id,
         teamName: team.name,
+        teamShortName: team.shortName,
+        logoUrl: team.logoUrl,
+        jerseyPrimary: team.jerseyPrimary,
         played: 0,
         won: 0,
         lost: 0,
@@ -201,27 +226,49 @@ export class ProjectionService {
       const innings1 = match.innings.find((i) => i.inningsNumber === 1);
       const innings2 = match.innings.find((i) => i.inningsNumber === 2);
 
-      if (innings1 && innings2) {
+      const isAbandonedOrNoResult =
+        match.status === MatchStatus.ABANDONED ||
+        (match.status !== MatchStatus.COMPLETED && !match.winnerTeamId);
+
+      const isTie =
+        match.status === MatchStatus.COMPLETED &&
+        !match.winnerTeamId &&
+        (match.resultSummary?.toLowerCase().includes('tie') ||
+          (innings1 && innings2 && innings1.totalRuns === innings2.totalRuns));
+
+      const countsForNrr = match.status === MatchStatus.COMPLETED && (Boolean(match.winnerTeamId) || isTie);
+
+      if (countsForNrr && innings1 && innings2) {
         const team1 = rows.get(innings1.battingTeamId);
         const team2 = rows.get(innings2.battingTeamId);
         if (team1 && team2) {
+          const maxBalls = (seasonSettings?.oversPerInnings ?? 20) * 6;
+          // All-out rule: If a team is all-out (10 wickets), they are deemed to have batted the full quota of overs.
+          const team1BallsBatted = innings1.wickets >= 10 ? maxBalls : innings1.balls;
+          const team2BallsBatted = innings2.wickets >= 10 ? maxBalls : innings2.balls;
+
           team1.runsFor += innings1.totalRuns;
-          team1.ballsFor += innings1.balls;
+          team1.ballsFor += team1BallsBatted;
           team1.runsAgainst += innings2.totalRuns;
-          team1.ballsAgainst += innings2.balls;
+          team1.ballsAgainst += team2BallsBatted;
 
           team2.runsFor += innings2.totalRuns;
-          team2.ballsFor += innings2.balls;
+          team2.ballsFor += team2BallsBatted;
           team2.runsAgainst += innings1.totalRuns;
-          team2.ballsAgainst += innings1.balls;
+          team2.ballsAgainst += team1BallsBatted;
         }
       }
 
-      if (match.status === MatchStatus.ABANDONED || !match.winnerTeamId) {
+      if (isAbandonedOrNoResult) {
         a.noResult += 1;
         b.noResult += 1;
         a.points += pointsNoResult;
         b.points += pointsNoResult;
+      } else if (isTie) {
+        a.tied += 1;
+        b.tied += 1;
+        a.points += pointsTie;
+        b.points += pointsTie;
       } else if (match.winnerTeamId === match.teamAId) {
         a.won += 1;
         b.lost += 1;
@@ -231,10 +278,10 @@ export class ProjectionService {
         a.lost += 1;
         b.points += pointsWin;
       } else {
-        a.tied += 1;
-        b.tied += 1;
-        a.points += pointsTie;
-        b.points += pointsTie;
+        a.noResult += 1;
+        b.noResult += 1;
+        a.points += pointsNoResult;
+        b.points += pointsNoResult;
       }
     }
 
@@ -254,9 +301,11 @@ export class ProjectionService {
       return right.netRunRate - left.netRunRate;
     });
 
+    const anyMatchesPlayed = matches.some((m) => m.status === MatchStatus.COMPLETED);
     materialized.forEach((row, index) => {
-      row.qualified = index < 4;
-      row.eliminated = index >= Math.max(teams.length - 2, 0);
+      const hasProgress = anyMatchesPlayed && row.played > 0;
+      row.qualified = hasProgress && index < 4 && row.points >= 4;
+      row.eliminated = hasProgress && index >= Math.max(teams.length - 2, 0) && row.played >= 2 && row.points === 0;
     });
 
     await this.prisma.$transaction([
@@ -300,7 +349,7 @@ export class ProjectionService {
     for (const ball of balls) {
       const batter = battingMap.get(ball.strikerId) ?? { runs: 0, balls: 0, fours: 0, sixes: 0 };
       batter.runs += ball.runsOffBat;
-      if (ball.isValidDelivery) {
+      if (ball.extrasType !== 'WIDE') {
         batter.balls += 1;
       }
       if (ball.runsOffBat === 4) {
@@ -315,8 +364,10 @@ export class ProjectionService {
       if (ball.isValidDelivery) {
         bowler.balls += 1;
       }
-      bowler.runs += ball.runsOffBat + ball.extrasRuns;
-      if (ball.wicket) {
+      const bowlerExtras =
+        ball.extrasType === 'BYE' || ball.extrasType === 'LEG_BYE' ? 0 : ball.extrasRuns;
+      bowler.runs += ball.runsOffBat + bowlerExtras;
+      if (ball.wicket && (!ball.wicketType || !NON_BOWLER_WICKETS.has(ball.wicketType))) {
         bowler.wickets += 1;
       }
       bowlingMap.set(ball.bowlerId, bowler);
@@ -405,9 +456,14 @@ export class ProjectionService {
     return flattened;
   }
 
-  async listLeaderboard(metric: LeaderboardMetric): Promise<LeaderboardRow[]> {
+  async listLeaderboard(metric: LeaderboardMetric, tournamentId?: string): Promise<LeaderboardRow[]> {
+    const where: Prisma.LeaderboardProjectionWhereInput = { metric };
+    if (tournamentId) {
+      where.tournamentId = tournamentId;
+    }
+
     const rows = await this.prisma.leaderboardProjection.findMany({
-      where: { metric },
+      where,
       include: {
         player: true,
       },

@@ -1,8 +1,11 @@
 import { useApi } from '../../hooks/useApi';
+import { useTournament } from '../../context/TournamentContext';
 import { Card, LoadingSkeleton, SectionTitle } from '../../components/ui';
 
 export function PublicAnnouncementsPage() {
-  const { data, loading, error } = useApi<any[]>('/public/announcements');
+  const { selectedTournamentId } = useTournament();
+  const path = selectedTournamentId ? `/public/announcements?tournamentId=${encodeURIComponent(selectedTournamentId)}` : '/public/announcements';
+  const { data, loading, error } = useApi<any[]>(path);
 
   return (
     <div className="page-grid">

@@ -19,6 +19,7 @@ export function AdminFixturesPage() {
     startsAt: '',
   });
   const [venueForm, setVenueForm] = useState({ name: '', city: '', address: '' });
+  const [fixtureError, setFixtureError] = useState<string | null>(null);
 
   const addVenue = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -35,9 +36,18 @@ export function AdminFixturesPage() {
     if (!teamAId || !teamBId || !venueId || !fixtureForm.matchNumber || !fixtureForm.startsAt) {
       return;
     }
-    await apiPost('/admin/fixtures', { ...fixtureForm, teamAId, teamBId, venueId });
-    setFixtureForm((prev) => ({ ...prev, matchNumber: '', startsAt: '' }));
-    await fixtures.refetch();
+    if (teamAId === teamBId) {
+      setFixtureError('Team A and Team B must be different teams');
+      return;
+    }
+    setFixtureError(null);
+    try {
+      await apiPost('/admin/fixtures', { ...fixtureForm, teamAId, teamBId, venueId });
+      setFixtureForm((prev) => ({ ...prev, matchNumber: '', startsAt: '' }));
+      await fixtures.refetch();
+    } catch (err: any) {
+      setFixtureError(err.message ?? 'Failed to create fixture');
+    }
   };
 
   const removeFixture = async (id: string) => {
@@ -105,6 +115,7 @@ export function AdminFixturesPage() {
             Create Fixture
           </button>
         </form>
+        {fixtureError ? <p style={{ color: 'var(--danger)', marginTop: 8 }}>{fixtureError}</p> : null}
       </Card>
 
       <Card>

@@ -12,6 +12,24 @@ export function AdminDashboardPage() {
     return <Card>Unable to load admin dashboard.</Card>;
   }
 
+  if (!data.hasTournament || !data.tournament) {
+    return (
+      <div className="page-grid">
+        <Card>
+          <SectionTitle
+            title="Welcome to TurfHero"
+            subtitle="You have not configured your tournament yet. Create your tournament to start managing teams, schedules, and live scoring."
+          />
+          <div style={{ marginTop: '1.5rem' }}>
+            <Link to="/admin/tournament" className="button primary" style={{ display: 'inline-block' }}>
+              + Create Tournament Now
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="page-grid">
       <Card>

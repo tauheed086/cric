@@ -5,14 +5,23 @@ import { PublicService } from './public.service.js';
 export class PublicController {
   constructor(private readonly publicService: PublicService) {}
 
+  @Get('tournaments')
+  tournaments() {
+    return this.publicService.listTournaments();
+  }
+
   @Get('home')
-  home() {
-    return this.publicService.homeDashboard();
+  home(@Query('tournamentId') tournamentId?: string) {
+    return this.publicService.homeDashboard(tournamentId);
   }
 
   @Get('fixtures')
-  fixtures(@Query('status') status?: string, @Query('date') date?: string) {
-    return this.publicService.fixtures(status, date);
+  fixtures(
+    @Query('status') status?: string,
+    @Query('date') date?: string,
+    @Query('tournamentId') tournamentId?: string,
+  ) {
+    return this.publicService.fixtures(status, date, tournamentId);
   }
 
   @Get('matches/:matchId/overview')
@@ -41,13 +50,13 @@ export class PublicController {
   }
 
   @Get('results')
-  results() {
-    return this.publicService.results();
+  results(@Query('tournamentId') tournamentId?: string) {
+    return this.publicService.results(tournamentId);
   }
 
   @Get('points-table')
-  pointsTable() {
-    return this.publicService.pointsTable();
+  pointsTable(@Query('tournamentId') tournamentId?: string) {
+    return this.publicService.pointsTable(tournamentId);
   }
 
   @Get('teams/:teamId')
@@ -61,22 +70,22 @@ export class PublicController {
   }
 
   @Get('leaderboards')
-  leaderboards() {
-    return this.publicService.leaderboards();
+  leaderboards(@Query('tournamentId') tournamentId?: string) {
+    return this.publicService.leaderboards(tournamentId);
   }
 
   @Get('awards')
-  awards() {
-    return this.publicService.awards();
+  awards(@Query('tournamentId') tournamentId?: string) {
+    return this.publicService.awards(tournamentId);
   }
 
   @Get('announcements')
-  announcements() {
-    return this.publicService.announcements();
+  announcements(@Query('tournamentId') tournamentId?: string) {
+    return this.publicService.announcements(tournamentId);
   }
 
   @Get('search')
-  search(@Query('q') q = '') {
-    return this.publicService.search(q);
+  search(@Query('q') q = '', @Query('tournamentId') tournamentId?: string) {
+    return this.publicService.search(q, tournamentId);
   }
 }

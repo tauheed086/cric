@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
-import { PublicController } from './public.controller';
-import { PublicService } from './public.service';
+import { PublicController } from './public.controller.js';
+import { PublicService } from './public.service.js';
 
 describe('PublicController', () => {
   it('returns home payload from service', async () => {
