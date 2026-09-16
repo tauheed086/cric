@@ -22,6 +22,13 @@ class SeedRandom {
 }
 
 async function main() {
+  const existingCount = await prisma.tournament.count();
+  const force = process.env.FORCE_SEED === 'true';
+  if (existingCount > 0 && !force) {
+    console.log(`--- Database already has ${existingCount} tournament(s). Skipping seed. ---`);
+    return;
+  }
+
   console.log('--- Cleaning existing data ---');
   await prisma.$transaction([
     prisma.extrasEvent.deleteMany(),
