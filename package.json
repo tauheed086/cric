@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "build": "npm run -w @cric/types build && npm run -w @cric/api build && npm run -w @cric/web build",
+    "build:web": "npm run -w @cric/types build && npm run -w @cric/web build",
+    "build:api": "npm run -w @cric/types build && npm run -w @cric/api prisma:generate && npm run -w @cric/api build",
     "dev": "npm run -w @cric/web dev",
     "dev:api": "npm run -w @cric/api start:dev",
     "dev:web": "npm run -w @cric/web dev",

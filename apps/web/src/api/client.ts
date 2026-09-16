@@ -1,6 +1,7 @@
 import { AdminRole, type AdminUserSummary } from '@cric/types';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:4000';
+const RAW_API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:4000';
+const API_BASE = RAW_API_BASE.replace(/\/+$/, '');
 export const DEFAULT_ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN ?? 'local-admin-token';
 export const DEFAULT_ADMIN_NAME = import.meta.env.VITE_ADMIN_NAME ?? 'Super Admin';
 

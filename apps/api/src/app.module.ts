@@ -6,10 +6,14 @@ import { EventsModule } from './events/events.module.js';
 import { PublicModule } from './public/public.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { ScoringModule } from './scoring/scoring.module.js';
+import { HealthController } from './health/health.controller.js';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env', 'apps/api/.env'],
+    }),
     EventEmitterModule.forRoot(),
     PrismaModule,
     EventsModule,
@@ -17,5 +21,6 @@ import { ScoringModule } from './scoring/scoring.module.js';
     PublicModule,
     AdminModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

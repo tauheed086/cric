@@ -1,0 +1,24 @@
+databases:
+  - name: cric-db
+    databaseName: cric_db
+    user: cric_user
+    plan: free
+
+services:
+  - type: web
+    name: cric-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build:api
+    preDeployCommand: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+    startCommand: node apps/api/dist/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cric-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_TOKEN
+        generateValue: true
