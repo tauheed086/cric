@@ -9,7 +9,7 @@ services:
     name: cric-api
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build:api
+    buildCommand: npm install --include=dev && npm run build:api
     startCommand: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/main.js
     healthCheckPath: /health
     envVars:

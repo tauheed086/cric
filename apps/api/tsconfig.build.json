@@ -3,7 +3,8 @@
   "compilerOptions": {
     "rootDir": "src",
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["test", "**/*.spec.ts", "**/*.test.ts"]
